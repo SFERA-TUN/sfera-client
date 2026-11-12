@@ -6,3 +6,5 @@
 /mobile/ios/*.xcodeproj/
 .DS_Store
 __pycache__/
+/windows/bin/
+/windows/obj/

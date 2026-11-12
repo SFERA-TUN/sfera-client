@@ -1,6 +1,6 @@
 #!/bin/bash
 set -euo pipefail
-platform=${1:?Expected android or ios}
+platform=${1:?Expected android, ios or windows}
 revision=${RELEASE_COMMIT:?}
 repository=${GITHUB_REPOSITORY:?}
 number=${GITHUB_RUN_NUMBER:?}
@@ -24,6 +24,12 @@ case $platform in
     else
       note="The unsigned XCArchive cannot be installed on an iPhone."
     fi
+    ;;
+  windows)
+    assets=(SFERA-Windows-x64.zip)
+    [[ -f ${assets[0]} ]]
+    title="SFERA Windows"
+    note="Extract the full archive and open SFERA.exe. Windows 11 x64 is required."
     ;;
   *) exit 2 ;;
 esac
