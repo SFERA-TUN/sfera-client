@@ -18,6 +18,11 @@ struct MacClientCheck {
         precondition(server.port == 22)
         precondition(RuntimeStatus(state: "connecting").canStop)
         precondition(!RuntimeStatus(state: "stopping").canStop)
+        let current = ServerRelease.versionParts("server-v0.1.9")
+        let next = ServerRelease.versionParts("server-v0.1.10")
+        precondition(current?.lexicographicallyPrecedes(next ?? []) == true)
+        precondition(ServerRelease.versionParts("server-v0.1.10-rc.1") == nil)
+
 
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
