@@ -1,0 +1,87 @@
+name: Windows build and release
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ['windows/**', 'scripts/package-windows.ps1', 'scripts/mobile/publish.sh', 'core.ref', '.github/workflows/windows-release.yml']
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    runs-on: windows-2025
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: core
+        shell: pwsh
+        run: |
+          $ref = (Get-Content core.ref -Raw).Trim()
+          if ($ref -cnotmatch '^[0-9a-f]{40}$') { throw 'Invalid transport commit' }
+          "ref=$ref" >> $env:GITHUB_OUTPUT
+      - uses: actions/checkout@v4
+        with:
+          repository: SFERA-TUN/sfera-server
+          ref: ${{ steps.core.outputs.ref }}
+          path: core
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Check PowerShell scripts
+        shell: powershell
+        run: |
+          foreach ($file in @('windows/Connect-Sfera.ps1', 'scripts/package-windows.ps1')) {
+            $tokens = $null
+            $errors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$errors)
+            if ($errors.Count) { throw ($errors | Out-String) }
+          }
+      - name: Build transport
+        working-directory: core
+        shell: pwsh
+        run: |
+          rustup target add x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --locked --release --target x86_64-pc-windows-msvc --bin sfera-net
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\target\x86_64-pc-windows-msvc\release\sfera-net.exe --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Package Windows client
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Path distribution | Out-Null
+          .\scripts\package-windows.ps1 -Transport .\core\target\x86_64-pc-windows-msvc\release\sfera-net.exe -Output .\distribution\SFERA-Windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: distribution/SFERA-Windows-x64.zip
+          if-no-files-found: error
+
+  publish-windows:
+    needs: windows
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows
+          path: distribution
+      - name: Publish Windows prerelease
+        working-directory: distribution
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: ../scripts/mobile/publish.sh windows

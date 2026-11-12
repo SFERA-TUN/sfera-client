@@ -51,6 +51,10 @@ scripts/mobile/build-ios.sh unsigned
 
 Для публикации через TestFlight нужны сертификат Apple Distribution и два профиля App Store Distribution: `dev.sfera.client` и `dev.sfera.client.tunnel`. Обоим идентификаторам нужны Packet Tunnel и общая группа Keychain `<Team ID>.dev.sfera.client.shared`.
 
+## Windows
+
+[Сборка Windows x64](../windows/README.md#сборка-на-windows) требует .NET SDK 10, Rust и Visual Studio Build Tools с MSVC. Workflow **Windows build and release** упаковывает приложение, транспорт и Wintun в `SFERA-Windows-x64.zip` и публикует пререлиз `windows-<номер запуска>` с SHA-256.
+
 ## Публикация через GitHub Actions
 
 Проверка PR собирает Android и iOS без секретов. При push в `main` workflow публикует отдельные пререлизы `android-<номер запуска>` и `ios-<номер запуска>` с файлами `SHA256SUMS`. Для ручного запуска выберите **Mobile build and release** на ветке `main`.
