@@ -42,6 +42,28 @@ struct MacClientCheck {
         reopened.removeProfile(first.id)
         precondition(reopened.profile?.id == second.id && reopened.profiles.count == 1)
 
-        print("SSH endpoint, disconnect during reconnect, profile migration/import/selection/removal: OK")
+        var directSites = DirectSites(useRussianSites: true, custom: "https://Example.org/path")
+        let disabledRoutes = try directSites.resolve { _ in
+            preconditionFailure("Disabled split tunneling must not perform DNS lookups")
+        }
+        precondition(disabledRoutes.isEmpty, "Disabled split tunneling must leave all traffic in the VPN")
+        directSites.enabled = true
+        let hosts = try directSites.hosts()
+        precondition(hosts.contains("example.org") && hosts.contains("yandex.ru"),
+                     "Re-enabling split tunneling must preserve both site lists")
+
+        let punctuated = DirectSites(custom: "https://example.com/?q=a,example.org;example.net")
+        let parsed = try punctuated.hosts()
+        precondition(parsed == ["example.com"], "URL punctuation must not add routes")
+
+        let twoSites = DirectSites(enabled: true, custom: "example.org\nexample.net")
+        do {
+            _ = try twoSites.resolve { $0 == "example.org" ? ["93.184.215.14"] : [] }
+            preconditionFailure("A successful lookup must not hide a failed hostname")
+        } catch DirectSites.Failure.unresolved(let hosts) {
+            precondition(hosts == ["example.net"])
+        }
+
+        print("SSH endpoint, profile management, and split tunneling: OK")
     }
 }

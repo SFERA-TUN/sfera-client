@@ -101,7 +101,7 @@ def serve(uid, version):
                 try:
                     connection.settimeout(2)
                     caller = peer_uid(connection)
-                    command = read_line(connection, 4096)
+                    command = read_line(connection, 4096 + len(b"start-profile ") + 1)
                     if command == b"probe\n" and caller in (0, uid):
                         reply = {"version": version}
                     elif caller == uid and (command == b"start\n" or command.startswith(b"start-profile ")):
@@ -235,8 +235,8 @@ def main():
     args = parser.parse_args()
     try:
         if args.command == "connect":
-            profile = sys.stdin.buffer.read(2049).strip() if args.profile else None
-            if args.profile and (not profile or len(profile) > 2048 or b"\n" in profile):
+            profile = sys.stdin.buffer.read(4097).strip() if args.profile else None
+            if args.profile and (not profile or len(profile) > 4096 or b"\n" in profile):
                 raise ValueError("Invalid SFERA profile message")
             connect(args.resources, profile)
         elif args.command == "install":

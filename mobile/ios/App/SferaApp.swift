@@ -42,7 +42,18 @@ private final class Connection {
     }
 
     func refresh() {
+        let previous = status
         status = manager?.connection.status ?? .invalid
+        if [.connecting, .reasserting].contains(previous), status == .disconnected,
+           let connection = manager?.connection {
+            connection.fetchLastDisconnectError { [weak self] failure in
+                guard let failure else { return }
+                Task { @MainActor in
+                    guard let self, self.status == .disconnected else { return }
+                    self.error = failure.localizedDescription
+                }
+            }
+        }
     }
 
     func importFile(_ url: URL) {
@@ -94,6 +105,7 @@ private final class Connection {
 private struct ConnectionView: View {
     @State private var model = Connection()
     @State private var importing = false
+    @State private var editingDirectSites = false
 
     private let accent = Color(red: 0.96, green: 0.75, blue: 0.48)
     private let panel = Color(red: 0.10, green: 0.11, blue: 0.13)
@@ -142,6 +154,10 @@ private struct ConnectionView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.large)
                     .disabled(model.active || model.busy)
+                Button("Сайты без VPN", systemImage: "arrow.triangle.branch") { editingDirectSites = true }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    .disabled(model.active || model.busy)
                 if let error = model.error {
                     Label(error, systemImage: "exclamationmark.circle")
                         .foregroundStyle(.orange)
@@ -160,6 +176,7 @@ private struct ConnectionView: View {
                 if (error as? CocoaError)?.code != .userCancelled { model.error = error.localizedDescription }
             }
         }
+        .sheet(isPresented: $editingDirectSites) { DirectSitesEditor() }
         .task { await model.load() }
         .onReceive(NotificationCenter.default.publisher(for: .NEVPNStatusDidChange)) { _ in
             model.refresh()

@@ -44,24 +44,45 @@ enum ProfileError: LocalizedError {
 }
 
 enum ProfileStore {
-    private static let query: [String: Any] = [
-        kSecClass as String: kSecClassGenericPassword,
-        kSecAttrService as String: "dev.sfera.client.profile",
-        kSecAttrAccount as String: "active",
-    ]
+    private static let profileService = "dev.sfera.client.profile"
+    private static let sitesService = "dev.sfera.client.direct-sites"
 
     static func load() throws -> Profile? {
+        try data(service: profileService).map(Profile.decode)
+    }
+
+    static func save(_ profile: Profile) throws {
+        try save(JSONEncoder().encode(profile), service: profileService)
+    }
+
+    static func loadDirectSites() throws -> DirectSites? {
+        try data(service: sitesService).map { try JSONDecoder().decode(DirectSites.self, from: $0) }
+    }
+
+    static func saveDirectSites(_ sites: DirectSites) throws {
+        try save(JSONEncoder().encode(sites), service: sitesService)
+    }
+
+    private static func query(service: String) -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: "active",
+        ]
+    }
+
+    private static func data(service: String) throws -> Data? {
         var item: CFTypeRef?
-        var lookup = query
+        var lookup = query(service: service)
         lookup[kSecReturnData as String] = true
         let result = SecItemCopyMatching(lookup as CFDictionary, &item)
         if result == errSecItemNotFound { return nil }
         guard result == errSecSuccess, let data = item as? Data else { throw ProfileError.inaccessible }
-        return try Profile.decode(data)
+        return data
     }
 
-    static func save(_ profile: Profile) throws {
-        let data = try JSONEncoder().encode(profile)
+    private static func save(_ data: Data, service: String) throws {
+        let query = query(service: service)
         let value: [String: Any] = [kSecValueData as String: data]
         let result = SecItemUpdate(query as CFDictionary, value as CFDictionary)
         if result == errSecItemNotFound {

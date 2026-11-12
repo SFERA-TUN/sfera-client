@@ -5,11 +5,16 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Intent;
+import android.net.IpPrefix;
 import android.net.VpnService;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import java.io.IOException;
+import java.net.InetAddress;
+import java.util.Collections;
+import java.util.List;
 
 public final class SferaVpn extends VpnService {
     static final String START = "dev.sfera.client.START";
@@ -21,23 +26,54 @@ public final class SferaVpn extends VpnService {
     private ParcelFileDescriptor tunnel;
     private long handle;
     private boolean stopping;
+    private int attempt;
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent == null || !START.equals(intent.getAction())) {
-            if (handle != 0) stopTunnel();
-            else stopSelf();
+            stopTunnel();
             return START_NOT_STICKY;
         }
-        if (handle != 0) return START_NOT_STICKY;
+        if (active) return START_NOT_STICKY;
         stopping = false;
         publish("Подключаемся…", true);
+        int generation = ++attempt;
+        DirectSites sites = DirectSites.load(this);
+        if (Build.VERSION.SDK_INT >= 33 && sites.configured()) {
+            new Thread(() -> {
+                try {
+                    List<String> addresses = sites.resolve();
+                    main.post(() -> {
+                        if (generation == attempt) establish(addresses);
+                    });
+                } catch (Exception error) {
+                    main.post(() -> {
+                        if (generation == attempt) {
+                            finished(-1);
+                            state = error.getLocalizedMessage();
+                        }
+                    });
+                }
+            }, "SFERA DNS").start();
+        } else {
+            establish(Collections.emptyList());
+        }
+        return START_NOT_STICKY;
+    }
+
+    private void establish(List<String> directIPv4) {
         try {
             Profile profile = Profile.load(this);
             // The transport and HTTPS signaling use the underlying network.
-            tunnel = new Builder().setSession("SFERA")
+            Builder builder = new Builder().setSession("SFERA")
                 .setMtu(1280).addAddress(profile.peer, 30).addRoute("0.0.0.0", 0)
                 .addDnsServer("1.1.1.1").addDnsServer("9.9.9.9")
-                .addDisallowedApplication(getPackageName()).establish();
+                .addDisallowedApplication(getPackageName());
+            if (Build.VERSION.SDK_INT >= 33) {
+                for (String ip : directIPv4) {
+                    builder.excludeRoute(new IpPrefix(InetAddress.getByName(ip), 32));
+                }
+            }
+            tunnel = builder.establish();
             if (tunnel == null) throw new IOException("VPN permission unavailable");
             handle = NativeTunnel.create();
             long session = handle;
@@ -55,7 +91,6 @@ public final class SferaVpn extends VpnService {
         } catch (Exception | LinkageError error) {
             finished(-1);
         }
-        return START_NOT_STICKY;
     }
 
     private void poll() {
@@ -67,7 +102,13 @@ public final class SferaVpn extends VpnService {
     }
 
     private void stopTunnel() {
-        if (handle == 0 || stopping) return;
+        if (stopping) return;
+        ++attempt;
+        if (handle == 0) {
+            if (active) finished(2);
+            else stopSelf();
+            return;
+        }
         stopping = true;
         publish("Отключаемся…", true);
         NativeTunnel.stop(handle);
@@ -109,7 +150,7 @@ public final class SferaVpn extends VpnService {
     }
 
     @Override public void onDestroy() {
-        stopTunnel();
+        if (active) stopTunnel();
         super.onDestroy();
     }
 }

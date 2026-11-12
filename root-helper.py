@@ -198,7 +198,22 @@ def read_profile() -> dict[str, Any]:
                 not private_peer(peer) or int(peer) & 3 != 2 or
                 not re.fullmatch(r"[0-9a-f]{64}", token)):
             raise ValueError
-        return {"host": str(host), "peerIP": str(peer), "token": token, "version": 1}
+        requested = profile.get("directIPv4", [])
+        if not isinstance(requested, list) or len(requested) > 96:
+            raise ValueError
+        direct = set()
+        for item in requested:
+            if not isinstance(item, str):
+                raise ValueError
+            address = ipaddress.IPv4Address(item)
+            if not address.is_global or address.is_multicast or address.is_reserved or item in ("1.1.1.1", "9.9.9.9"):
+                raise ValueError
+            if address != host:
+                direct.add(str(address))
+        result = {"host": str(host), "peerIP": str(peer), "token": token, "version": 1}
+        if direct:
+            result["directIPv4"] = sorted(direct)
+        return result
     except (TypeError, KeyError, ValueError, AttributeError):
         raise HelperError("Invalid SFERA connection profile.") from None
 
@@ -343,18 +358,13 @@ def recover_stale_session(record: dict[str, Any], runtime: Path) -> list[str]:
     errors: list[str] = terminate_recorded_children(record)
     routes = mutations.get("routes") or {}
     for entry in reversed(routes.get("splits") or []):
-        if entry.get("attempted"):
+        if entry.get("attempted") and not entry.get("direct"):
             try:
                 remove_split_route_entry(entry)
             except Exception as exc:
                 errors.append(f"restore route {entry.get('cidr')}: {exc}")
     errors.extend(restore_network_services(mutations))
-    host = routes.get("host")
-    if host and host.get("attempted") and not host.get("existing"):
-        try:
-            remove_host_route(host)
-        except Exception as exc:
-            errors.append(f"restore server host route: {exc}")
+    errors.extend(restore_host_routes(routes))
     if errors:
         state_path = state_dir(int(record.get("uid", 0))) / "session.json"
         preserved = dict(record)
@@ -371,13 +381,32 @@ def remove_split_route_entry(entry: dict[str, Any]) -> None:
         run(["/sbin/route", "-n", "delete", "-net", entry["cidr"]])
 
 
+def direct_routes(routes: dict[str, Any]) -> list[dict[str, Any]]:
+    # Also read journals from the first split-tunneling preview.
+    return [*routes.get("direct", []), *(entry for entry in routes.get("splits", []) if entry.get("direct"))]
+
+
+def restore_host_routes(routes: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    for entry in [*direct_routes(routes), routes.get("host")]:
+        if entry and entry.get("attempted") and not entry.get("existing"):
+            try:
+                remove_host_route(entry)
+            except Exception as exc:
+                errors.append(f"restore host route {entry.get('cidr')}: {exc}")
+    return errors
+
+
 def remove_host_route(entry: dict[str, Any]) -> None:
     routes = parse_netstat_routes(run(["/usr/sbin/netstat", "-rn", "-f", "inet"]).stdout,
                                  unscoped_only=True)
     cidr = ipaddress.IPv4Network(entry["cidr"])
     route = routes.get(str(cidr))
     if route and host_route_matches(entry, route):
-        run(["/sbin/route", "-n", "delete", "-host", str(cidr.network_address)])
+        if entry.get("direct"):
+            run(["/sbin/route", "-n", "delete", "-net", str(cidr)])
+        else:
+            run(["/sbin/route", "-n", "delete", "-host", str(cidr.network_address)])
 
 
 def host_route_matches(entry: dict[str, Any], route: dict[str, str]) -> bool:
@@ -619,7 +648,10 @@ class Supervisor:
         self.capture_default_network()
         self.capture_ipv6_and_dns()
         self.ensure_no_route_conflicts()
-        self.pin_server_route()
+        routes = self.mutations["routes"]
+        self.pin_host_route(routes["host"])
+        for entry in direct_routes(routes):
+            self.pin_host_route(entry)
         self.disable_ipv6()
         self.configure_dns()
         self.initial_utuns = list_utun_interfaces()
@@ -671,12 +703,24 @@ class Supervisor:
         }
 
     def refresh_underlay(self) -> None:
-        host = self.mutations["routes"]["host"]
-        if host["existing"]:
+        routes = self.mutations["routes"]
+        host = routes["host"]
+        direct = direct_routes(routes)
+        if host["existing"] and not direct:
             return
         table = run(["/usr/sbin/netstat", "-rn", "-f", "inet"]).stdout
         path = primary_ipv4_path(table)
         if path is None:
+            return
+        if any(not all(entry.get(key) == value for key, value in path.items()) for entry in direct):
+            # Keep the VPN during handoff. A manual reconnect resolves exclusions on the new network.
+            errors = restore_host_routes({"direct": direct})
+            if errors:
+                raise HelperError("; ".join(errors))
+            routes.pop("direct", None)
+            routes["splits"] = [entry for entry in routes.get("splits", []) if not entry.get("direct")]
+            self.checkpoint()
+        if host["existing"]:
             return
         current = parse_netstat_routes(table, unscoped_only=True).get(host["cidr"])
         if current == path and all(host.get(key) == value for key, value in path.items()):
@@ -728,27 +772,34 @@ class Supervisor:
             if cidr in routes:
                 raise HelperError(f"Route {cidr} already exists; refusing to overwrite it.")
         server = f"{self.server_ip}/32"
-        existing = parse_netstat_routes(table, unscoped_only=True).get(server)
-        if existing and (existing.get("gateway") != self.original_gateway or
-                         existing.get("interface") != self.original_interface):
-            raise HelperError("The server host route already exists through another gateway.")
+        current = parse_netstat_routes(table, unscoped_only=True)
+
+        def host_entry(cidr: str) -> dict[str, Any]:
+            existing = current.get(cidr)
+            if existing and (existing.get("gateway") != self.original_gateway or
+                             existing.get("interface") != self.original_interface):
+                raise HelperError(f"Host route {cidr} already exists through another gateway.")
+            return {"cidr": cidr, "gateway": self.original_gateway,
+                    "interface": self.original_interface, "existing": bool(existing), "attempted": False}
+
         self.mutations["routes"] = {
-            "host": {"cidr": server, "gateway": self.original_gateway,
-                     "interface": self.original_interface, "existing": bool(existing), "attempted": False},
-            "splits": [{"cidr": cidr, "interface": None, "attempted": False} for cidr in SPLIT_ROUTES],
+            "host": host_entry(server),
+            # Older helpers recover every attempted net route in "splits".
+            "splits": [
+                *({"cidr": cidr, "interface": None, "attempted": False} for cidr in SPLIT_ROUTES),
+                *(dict(host_entry(f"{address}/32"), direct=True)
+                  for address in (self.profile or {}).get("directIPv4", [])),
+            ],
         }
         self.checkpoint()
 
-    def pin_server_route(self) -> None:
-        host = self.mutations["routes"]["host"]
-        if host["existing"]:
+    def pin_host_route(self, entry: dict[str, Any]) -> None:
+        if entry["existing"]:
             return
-        host["attempted"] = True
+        entry["attempted"] = True
         self.checkpoint()
-        run(["/sbin/route", "-n", "add", "-host", self.server_ip,
-             str(self.original_gateway), "-ifp", str(self.original_interface)])
-        host["added"] = True
-        self.checkpoint()
+        destination = ["-net", entry["cidr"]] if entry.get("direct") else ["-host", entry["cidr"].split("/")[0]]
+        run(["/sbin/route", "-n", "add", *destination, entry["gateway"], "-ifp", entry["interface"]])
 
     def disable_ipv6(self) -> None:
         network = self.mutations["network"]
@@ -872,6 +923,8 @@ class Supervisor:
         if not self.interface:
             raise HelperError("Cannot install split routes without a SFERA utun interface.")
         for entry in self.mutations["routes"]["splits"]:
+            if entry.get("direct"):
+                continue
             entry["interface"] = self.interface
             entry["attempted"] = True
             self.checkpoint()
@@ -918,18 +971,13 @@ class Supervisor:
         errors: list[str] = []
         routes = self.mutations.get("routes", {})
         for entry in reversed(routes.get("splits", [])):
-            if entry.get("attempted"):
+            if entry.get("attempted") and not entry.get("direct"):
                 try:
                     self.remove_split_route(entry)
                 except Exception as exc:
                     errors.append(f"remove route {entry.get('cidr')}: {exc}")
         errors.extend(restore_network_services(self.mutations))
-        host = routes.get("host")
-        if host and host.get("attempted") and not host.get("existing"):
-            try:
-                remove_host_route(host)
-            except Exception as exc:
-                errors.append(f"remove server host route: {exc}")
+        errors.extend(restore_host_routes(routes))
         return errors
 
     def remove_split_route(self, entry: dict[str, Any]) -> None:

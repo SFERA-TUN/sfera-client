@@ -1,0 +1,74 @@
+import SwiftUI
+
+struct DirectSitesEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("directSites.enabled") private var enabled = false
+    @AppStorage("directSites.useRussianSites") private var useRussianSites = false
+    @AppStorage("directSites.custom") private var custom = ""
+    @State private var draft = DirectSites()
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Сайты без VPN").font(.title2.bold())
+            Toggle("Раздельное туннелирование", isOn: $draft.enabled)
+            Text("Настройки применятся при следующем подключении. Список сохранится при выключении.")
+                .font(.footnote).foregroundStyle(.secondary)
+            Divider()
+            Toggle("Популярные сайты России", isOn: $draft.useRussianSites)
+            Text("Яндекс, VK, Госуслуги, банки и маркетплейсы.")
+                .font(.footnote).foregroundStyle(.secondary)
+            Text("Свои сайты").font(.headline)
+            Text("Вставьте домены или ссылки, по одному на строку.")
+                .font(.footnote).foregroundStyle(.secondary)
+            TextEditor(text: $draft.custom)
+                .font(.system(.body, design: .monospaced))
+                .accessibilityLabel("Свои сайты без VPN")
+                .frame(minHeight: 120, maxHeight: 160)
+                .padding(4)
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.secondary.opacity(0.35)))
+            Text("Исключения действуют на IPv4-адреса, найденные при подключении. Сайты с общим IP тоже могут пойти напрямую. Если IP изменился, переподключитесь. Поддомены добавляются отдельно.")
+                .font(.footnote).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let error { Text(error).font(.footnote).foregroundStyle(.orange) }
+            HStack {
+                Spacer()
+                Button("Отмена") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Сохранить", action: save).buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(idealWidth: 460)
+        .onAppear(perform: load)
+    }
+
+    private func load() {
+        let previous = DirectSites(enabled: enabled, useRussianSites: useRussianSites, custom: custom)
+        #if os(iOS)
+        do {
+            draft = try ProfileStore.loadDirectSites() ?? DirectSites(useRussianSites: previous.useRussianSites, custom: previous.custom)
+        } catch {
+            self.error = error.localizedDescription
+        }
+        #else
+        draft = previous
+        #endif
+    }
+
+    private func save() {
+        do {
+            _ = try draft.hosts()
+            #if os(iOS)
+            try ProfileStore.saveDirectSites(draft)
+            #else
+            enabled = draft.enabled
+            useRussianSites = draft.useRussianSites
+            custom = draft.custom
+            #endif
+            dismiss()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+}

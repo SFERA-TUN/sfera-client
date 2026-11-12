@@ -18,8 +18,10 @@ bundle="$staging/$(basename -- "$app")"
 mkdir -p "$bundle/Contents/"{MacOS,Resources}
 install -m 0755 "$binary" "$bundle/Contents/Resources/sfera-net"
 install -m 0644 "$root/root-helper.py" "$root/macos/service-helper.py" "$bundle/Contents/Resources/"
+install -m 0644 "$root/macos/Selfhost/SFERA.icns" "$bundle/Contents/Resources/"
 install -m 0644 "$root/macos/Selfhost/Info.plist" "$bundle/Contents/Info.plist"
 swiftc -swift-version 6 -parse-as-library -target "$arch-apple-macosx14.0" -O -D SFERA_SELFHOST \
+  "$root/mobile/ios/Shared/DirectSites.swift" "$root/mobile/ios/App/DirectSitesEditor.swift" \
   "$root/macos/SferaTest.swift" "$root/macos/Selfhost/"*.swift -o "$bundle/Contents/MacOS/SFERA"
 xattr -cr "$bundle"
 codesign --force --deep --sign - "$bundle"

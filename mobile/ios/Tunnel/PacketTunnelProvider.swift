@@ -31,17 +31,19 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 guard let profile = try ProfileStore.load(),
                       (self.protocolConfiguration as? NETunnelProviderProtocol)?.serverAddress == profile.host
                 else { throw ProfileError.invalid }
+                let sites = try ProfileStore.loadDirectSites() ?? DirectSites()
                 self.startReply = completionHandler
                 self.generation += 1
                 let attempt = self.generation
-                self.setTunnelNetworkSettings(Self.settings(profile)) { error in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let result = Result { try sites.resolve() }
                     self.queue.async {
                         guard self.generation == attempt else { return }
-                        if let error { self.end(error); return }
                         do {
-                            try self.startTransport(profile)
+                            let addresses = try result.get()
+                            self.applySettings(profile, directIPv4: addresses, attempt: attempt)
                         } catch {
-                            self.end(error)
+                            self.end(Self.failure(error.localizedDescription))
                         }
                     }
                 }
@@ -58,11 +60,27 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
-    private static func settings(_ profile: Profile) -> NEPacketTunnelNetworkSettings {
+    private func applySettings(_ profile: Profile, directIPv4: [String], attempt: Int) {
+        setTunnelNetworkSettings(Self.settings(profile, directIPv4: directIPv4)) { error in
+            self.queue.async {
+                guard self.generation == attempt else { return }
+                if let error { self.end(error); return }
+                do {
+                    try self.startTransport(profile)
+                } catch {
+                    self.end(error)
+                }
+            }
+        }
+    }
+
+    private static func settings(_ profile: Profile, directIPv4: [String]) -> NEPacketTunnelNetworkSettings {
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: profile.host)
         let ipv4 = NEIPv4Settings(addresses: [profile.peerIP], subnetMasks: ["255.255.255.252"])
         ipv4.includedRoutes = [.default()]
-        ipv4.excludedRoutes = [NEIPv4Route(destinationAddress: profile.host, subnetMask: "255.255.255.255")]
+        ipv4.excludedRoutes = Set(directIPv4 + [profile.host]).sorted().map {
+            NEIPv4Route(destinationAddress: $0, subnetMask: "255.255.255.255")
+        }
         settings.ipv4Settings = ipv4
         // SFERA currently carries IPv4. Route IPv6 to the extension and drop it.
         let ipv6 = NEIPv6Settings(addresses: ["fd5e:fa20:fa20::2"], networkPrefixLengths: [64])

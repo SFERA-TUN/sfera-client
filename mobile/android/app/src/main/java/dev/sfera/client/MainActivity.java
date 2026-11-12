@@ -1,17 +1,21 @@
 package dev.sfera.client;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.VpnService;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.CheckBox;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -30,6 +34,7 @@ public final class MainActivity extends Activity {
     private TextView message;
     private Button connection;
     private Button importButton;
+    private Button directSites;
     private Profile profile;
 
     @Override public void onCreate(Bundle savedState) {
@@ -65,6 +70,11 @@ public final class MainActivity extends Activity {
         importButton.setOnClickListener(view -> startActivityForResult(
             new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), IMPORT_PROFILE));
         add(layout, importButton, 14);
+        if (Build.VERSION.SDK_INT >= 33) {
+            directSites = button("Сайты без VPN", false);
+            directSites.setOnClickListener(view -> editDirectSites());
+            add(layout, directSites, 8);
+        }
         message = text("", 14, AMBER, false);
         message.setAccessibilityLiveRegion(TextView.ACCESSIBILITY_LIVE_REGION_POLITE);
         add(layout, message, 12);
@@ -100,6 +110,50 @@ public final class MainActivity extends Activity {
         if (!action.contentEquals(connection.getText())) connection.setText(action);
         connection.setEnabled((profile != null || SferaVpn.active) && !SferaVpn.state.equals("Отключаемся…"));
         importButton.setEnabled(!SferaVpn.active);
+        if (directSites != null) directSites.setEnabled(!SferaVpn.active);
+    }
+
+    private void editDirectSites() {
+        DirectSites saved = DirectSites.load(this);
+        var fields = column(20);
+        var enabled = new CheckBox(this);
+        enabled.setText("Раздельное туннелирование");
+        enabled.setChecked(saved.enabled);
+        add(fields, enabled, 0);
+        add(fields, text("Настройки применятся при следующем подключении. Список сохранится при выключении.",
+            13, MUTED, false), 4);
+        var preset = new CheckBox(this);
+        preset.setText("Популярные сайты России");
+        preset.setChecked(saved.useRussianSites);
+        add(fields, preset, 12);
+        var input = new EditText(this);
+        input.setHint("Домены или ссылки, по одному на строку");
+        input.setContentDescription("Свои сайты без VPN");
+        input.setInputType(android.text.InputType.TYPE_CLASS_TEXT |
+            android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE |
+            android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        input.setMinLines(3);
+        input.setMaxLines(6);
+        input.setText(saved.custom);
+        add(fields, input, 12);
+        add(fields, text("Исключения действуют на IPv4-адреса, найденные при подключении. " +
+            "Сайты с общим IP тоже могут пойти напрямую. Если IP изменился, переподключитесь. Поддомены добавляются отдельно.",
+            13, MUTED, false), 12);
+        var scroll = new ScrollView(this);
+        scroll.addView(fields);
+        var dialog = new AlertDialog.Builder(this).setTitle("Сайты без VPN").setView(scroll)
+            .setNegativeButton("Отмена", null).setPositiveButton("Сохранить", null).create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            .setOnClickListener(view -> {
+                try {
+                    new DirectSites(enabled.isChecked(), preset.isChecked(), input.getText().toString())
+                        .save(this);
+                    dialog.dismiss();
+                } catch (IllegalArgumentException error) {
+                    input.setError(error.getLocalizedMessage());
+                }
+            }));
+        dialog.show();
     }
 
     private void toggle() {
