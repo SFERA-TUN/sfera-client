@@ -1,41 +1,77 @@
-# SFERA Client
+<p align="center">
+  <img src="mobile/ios/App/Assets.xcassets/AppIcon.appiconset/Sfera.png" width="88" alt="Логотип SFERA">
+</p>
 
-Native clients for macOS 14+, Android 8+ (arm64 and x86_64) and iOS 17+. All three use the Rust transport from [SFERA Server](https://github.com/SFERA-TUN/sfera-server).
+<h1 align="center">SFERA</h1>
 
-macOS installs and manages a self-hosted VPS over SSH. On Android and iOS, import the JSON profile exported for your device, then choose **Подключить VPN**. The mobile transport carries IPv4. The token stays in Android app-private storage or the iOS Keychain.
+<p align="center"><strong>VPN на вашем VPS</strong></p>
 
-## Build locally
+<p align="center">
+  <a href="https://github.com/SFERA-TUN/sfera-client/releases">Скачать</a> ·
+  <a href="#быстрый-старт">Быстрый старт</a> ·
+  <a href="docs/BUILD.md">Сборка из исходников</a> ·
+  <a href="https://github.com/SFERA-TUN/sfera-server">Сервер</a>
+</p>
 
-```sh
-git clone https://github.com/SFERA-TUN/sfera-server.git core
-git -C core checkout --detach "$(cat core.ref)"
-(cd core && cargo build --locked --release --bin sfera-net)
-scripts/build-selfhost-macos.sh
-```
+<p align="center">
+  <img src="docs/screenshots/connection.png" width="580" alt="SFERA на macOS: выбран профиль «Мой VPS», VPN отключён">
+  <br><sub>Интерфейс macOS с демонстрационным профилем</sub>
+</p>
 
-For Android, use JDK 17, Gradle 8.11.1, SDK 35 and NDK 28.1.13356709. Set `ANDROID_HOME` to the SDK directory and install Rust targets `aarch64-linux-android` and `x86_64-linux-android` with the toolchain pinned by `core`. Run `scripts/mobile/build-android.sh assembleDebug`.
+SFERA подключает macOS, Android и iOS к вашему VPN-серверу. С Mac можно установить сервер по SSH, выдать отдельные профили для устройств, отозвать доступ и проверить обновления. На телефоне достаточно импортировать профиль.
 
-For iOS, use Xcode with the iOS platform, XcodeGen 2.46.0 and Rust target `aarch64-apple-ios`. Run `scripts/mobile/build-ios.sh unsigned`. For a simulator build, use `simulator` and install `aarch64-apple-ios-sim` on Apple Silicon.
+## Установка клиента
 
-## Split tunneling
+| Платформа | Требования | Где взять |
+| --- | --- | --- |
+| **macOS** | macOS 14+ | [Собрать `SFERA.app`](docs/BUILD.md#macos). При первом подключении может понадобиться пароль администратора Mac для установки сетевого помощника. |
+| **Android** | Android 8+, ARM64 или x86-64 | Скачать APK в [Releases](https://github.com/SFERA-TUN/sfera-client/releases). Для установки APK вручную Android может попросить разрешение для приложения, из которого вы открыли файл. |
+| **iOS** | iOS 17+ | Для установки на iPhone нужна сборка, подписанная Apple. Архив `.xcarchive.zip` в [Releases](https://github.com/SFERA-TUN/sfera-client/releases) предназначен для разработчиков. [Как собрать и подписать](docs/BUILD.md#ios). |
 
-Open **Сайты без VPN** while disconnected and turn **Раздельное туннелирование** on or off. The switch is off by default, and switching it off keeps your list for later. Enable the Russian sites preset or paste a domain, a URL, or a list of either. The preset is based on [V2Fly category-ru](https://github.com/v2fly/domain-list-community/blob/master/data/category-ru) and [amnezia-tunneling-ru](https://github.com/lib4u/amnezia-tunneling-ru).
+## Быстрый старт
 
-SFERA excludes the IPv4 addresses it resolves at connection time. If a listed host has no usable IPv4 answer, SFERA reports the host and stops that connection attempt. Correct the list or turn off split tunneling to reconnect. A different DNS resolver, DNS over HTTPS in a browser, or an IP change after connection can still return a different address that remains in the VPN. Add specific subdomains separately and reconnect when addresses change. Sites that share an IP address also share its route. On macOS, reconnect after changing networks to restore the exclusions. The setting is available on macOS, iOS 17+, and Android 13+.
+### 1. Настройте сервер с Mac
 
-## Updating the server
+Подготовьте отдельный VPS на Debian 12/13 или Ubuntu 24.04/26.04 с публичным IPv4, `systemd` и `/dev/net/tun`. Для установки нужны доступ по SSH, права `root` или `sudo` без запроса пароля, свободные TCP-порты 80, 443 и 7443 и UDP-порт 443. Откройте входящие TCP 80 и 443 и UDP 443 в файрволе VPS. TCP 7443 используется локально на сервере.
 
-On macOS, open **Мой сервер → Проверить обновления** and confirm the offered version. The app uses the fixed SFERA server repository and requires a stable release marked for v1 updates. Existing users, profile keys, addresses, and TLS configuration are kept. Active VPN sessions reconnect after a short service restart.
+1. В SFERA нажмите **Настроить сервер**. Укажите IPv4, при необходимости SSH-порт, имя пользователя и способ входа. Поддерживаются пароль, SSH-ключ и SSH-агент.
+2. Нажмите **Проверить сервер**. Сверьте отпечаток с выводом `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` в консоли VPS.
+3. Если SFERA ещё не установлена, нажмите **Установить SFERA** и введите email для TLS-сертификата. Клиент выберет пакет для `x86_64` или `aarch64` из последнего стабильного [серверного релиза](https://github.com/SFERA-TUN/sfera-server/releases), проверит SHA-256 и передаст пакет по SSH.
+4. Если сервер уже работает, клиент загрузит основной профиль и список пользователей. Для неполной установки клиент предложит восстановление.
 
-## GitHub releases
+<p align="center">
+  <img src="docs/screenshots/setup.png" width="580" alt="Мастер настройки VPS: IPv4, порт, имя пользователя и выбор способа входа по SSH">
+</p>
 
-A push to `main`, including a merge, builds both platforms from the pushed commit and publishes `android-<run number>` and `ios-<run number>` prereleases with SHA-256 checksums as soon as each platform finishes. Pull requests build both clients with read-only permissions. Run **Mobile build and release** on `main` for the initial build or a manual rebuild.
+### 2. Подключите устройства
 
-Without signing credentials, the workflow publishes an installable Android debug APK and an unsigned iOS XCArchive. Debug APK signatures can differ between runs. An unsigned XCArchive cannot be installed on an iPhone.
+- **На Mac:** выберите профиль и нажмите **Подключить VPN**. Готовый профиль также можно загрузить через **Импортировать профиль**.
+- **На Android или iOS:** на Mac откройте **Сервер → Пользователи**, добавьте пользователя для телефона и экспортируйте его профиль. На телефоне нажмите **Импортировать профиль**, выберите JSON-файл и разрешите системе создать VPN-подключение.
 
-| Platform | GitHub Actions secrets |
-| --- | --- |
-| Android | `ANDROID_KEYSTORE_B64`, `ANDROID_STORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` |
-| iOS | `IOS_P12_B64`, `IOS_P12_PASSWORD`, `IOS_APP_PROFILE_B64`, `IOS_TUNNEL_PROFILE_B64` |
+Выдавайте каждому устройству отдельный профиль. JSON содержит ключ доступа к VPN, поэтому передавайте его приватно. Вкладка **Сервер** на Mac позволяет экспортировать профиль повторно или отозвать доступ конкретного пользователя. Добавление и отзыв доступа перезапускают VPN-службу.
 
-Use the same Android distribution key across releases. For iOS, supply an Apple Distribution certificate and App Store distribution profiles for `dev.sfera.client` and `dev.sfera.client.tunnel`. Both IDs need Packet Tunnel and the shared Keychain group `<Team ID>.dev.sfera.client.shared`. The signed IPA is for App Store Connect and TestFlight. The pipeline rejects Ad Hoc profiles because public assets must not include registered device IDs.
+<p align="center">
+  <img src="docs/screenshots/server.png" width="580" alt="Вкладка «Мой сервер»: проверка обновлений и список отдельных профилей для MacBook, iPhone и Android">
+</p>
+
+## Сайты без VPN
+
+На macOS, iOS 17+ и Android 13+ можно направить выбранные сайты напрямую. Отключите VPN, откройте **Сайты без VPN** и включите **Раздельное туннелирование**. Выберите готовый список популярных российских сайтов или добавьте свои домены и ссылки, по одному на строку. Сохраните настройки и подключитесь заново.
+
+Исключения выключены по умолчанию. При выключении список сохраняется. Маршруты строятся по IPv4, полученным при подключении. Поддомены добавляются отдельно, а сайты на одном IP используют один маршрут. Если адрес изменился, переподключитесь. Если для сайта не удалось найти IPv4, клиент укажет его и остановит попытку подключения. Исправьте список или выключите исключения и повторите попытку.
+
+<p align="center">
+  <img src="docs/screenshots/split-tunnel.png" width="580" alt="Настройки сайтов без VPN: общий переключатель, набор российских сайтов и поле своих исключений">
+</p>
+
+## Обновление сервера
+
+На Mac откройте **Сервер → Проверить обновления**. Клиент предложит обновление, когда в [серверных релизах](https://github.com/SFERA-TUN/sfera-server/releases) появится более новая стабильная версия с поддержкой обновления установленного сервера.
+
+Обновление сохраняет пользователей, их ключи, адреса профилей и TLS. Во время перезапуска действующие подключения кратковременно прерываются. Если новая VPN-служба не запускается, серверный установщик восстанавливает предыдущую версию.
+
+## Сборка и код
+
+Клиенты используют транспорт из [SFERA Server](https://github.com/SFERA-TUN/sfera-server). Файл [`core.ref`](core.ref) фиксирует ревизию транспорта для сборок клиента.
+
+[Локальная сборка и подпись](docs/BUILD.md) · [GitHub Actions](https://github.com/SFERA-TUN/sfera-client/actions) · [Сообщить об ошибке](https://github.com/SFERA-TUN/sfera-client/issues/new)
