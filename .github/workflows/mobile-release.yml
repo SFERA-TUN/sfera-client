@@ -126,47 +126,46 @@ jobs:
           path: distribution/*
           if-no-files-found: error
 
-  publish:
-    needs: [android, ios]
+  publish-android:
+    needs: android
     if: (github.event_name == 'pull_request_target' && github.event.pull_request.merged) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.merge_commit_sha || github.sha }}
+          persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
+          name: android
           path: distribution
-          merge-multiple: true
-      - name: Publish GitHub prerelease
+      - name: Publish android prerelease
+        working-directory: distribution
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_COMMIT: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.merge_commit_sha || github.sha }}
-        run: |
-          cd distribution
-          shopt -s nullglob
-          assets=(SFERA-Android*.apk SFERA-iOS*)
-          [[ ${#assets[@]} == 2 && $RELEASE_COMMIT =~ ^[a-f0-9]{40}$ ]]
-          sha256sum "${assets[@]}" > SHA256SUMS
-          tag="mobile-$GITHUB_RUN_NUMBER"
-          if draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null); then
-            if [[ $draft == true ]]; then
-              gh release upload "$tag" "${assets[@]}" SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
-              gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false
-            fi
-            exit 0
-          fi
-          {
-            printf 'Built from commit `%s`.\n\n' "$RELEASE_COMMIT"
-            if [[ -f SFERA-Android-debug.apk ]]; then
-              printf -- '- Android debug APK is installable. Debug signing may change between runs.\n'
-            else
-              printf -- '- Android APK is signed with the project distribution key.\n'
-            fi
-            if [[ -f SFERA-iOS.ipa ]]; then
-              printf -- '- The signed iOS IPA is for App Store Connect and TestFlight.\n'
-            else
-              printf -- '- The unsigned iOS archive is a build artifact and cannot be installed on an iPhone.\n'
-            fi
-          } > notes.md
-          gh release create "$tag" "${assets[@]}" SHA256SUMS --repo "$GITHUB_REPOSITORY" \
-            --target "$RELEASE_COMMIT" --title "SFERA mobile $GITHUB_RUN_NUMBER" --prerelease --notes-file notes.md
+        run: ../scripts/mobile/publish.sh android
+
+  publish-ios:
+    needs: ios
+    if: (github.event_name == 'pull_request_target' && github.event.pull_request.merged) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.merge_commit_sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: ios
+          path: distribution
+      - name: Publish ios prerelease
+        working-directory: distribution
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.merge_commit_sha || github.sha }}
+        run: ../scripts/mobile/publish.sh ios
