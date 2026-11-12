@@ -6,6 +6,7 @@ struct ServerView: View {
     let canSetUp: Bool
     let openSetup: () -> Void
     @State private var adding = false
+    @State private var confirmingUpdate = false
     @State private var name = ""
     @State private var secret = ""
     @State private var revokeUser: VPNUser?
@@ -18,6 +19,7 @@ struct ServerView: View {
                     Label(server.host, systemImage: "server.rack")
                         .font(.system(.callout, design: .monospaced))
                         .foregroundStyle(Palette.muted)
+                    if !client.needsPassword { versionContent }
                     usersContent
                     if let error = client.error {
                         InlineFeedback(error, icon: "exclamationmark.circle", tint: .orange)
@@ -76,6 +78,14 @@ struct ServerView: View {
             .presentationBackground(Palette.surface)
             .disabled(client.activity != nil)
         }
+        .confirmationDialog("Обновить сервер SFERA?", isPresented: $confirmingUpdate,
+                            presenting: client.serverUpdate) { update in
+            Button("Обновить до \(update.target)") {
+                Task { await client.updateServer() }
+            }
+        } message: { _ in
+            Text("Существующие пользователи и ключи сохранятся. Активные VPN-подключения ненадолго прервутся.")
+        }
         .confirmationDialog("Отозвать VPN-доступ?", isPresented: Binding(
             get: { revokeUser != nil }, set: { if !$0 { revokeUser = nil } }
         ), presenting: revokeUser) { user in
@@ -85,6 +95,27 @@ struct ServerView: View {
         } message: { user in
             Text("Профиль «\(user.name)» перестанет работать. При обновлении настроек сервер перезапустит активные подключения.")
         }
+    }
+
+    private var versionContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Версия сервера").font(.headline)
+            if let version = client.installedServerVersion {
+                Text(version == "unversioned" ? "Установка без номера версии" : version)
+                    .foregroundStyle(Palette.muted)
+            }
+            if let update = client.serverUpdate {
+                Button("Обновить до \(update.target)", systemImage: "arrow.down.circle") {
+                    confirmingUpdate = true
+                }
+                .buttonStyle(PrimaryButton())
+            } else {
+                Button("Проверить обновления", systemImage: "arrow.clockwise") {
+                    Task { await client.checkServerUpdate() }
+                }
+            }
+        }
+        .disabled(client.activity != nil)
     }
 
     private var usersContent: some View {

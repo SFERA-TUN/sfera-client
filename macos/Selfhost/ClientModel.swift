@@ -32,6 +32,8 @@ final class ClientModel {
     private(set) var activity: String?
     private(set) var identity: HostIdentity?
     private(set) var installation: ServerInstallation?
+    private(set) var installedServerVersion: String?
+    private(set) var serverUpdate: ServerUpdate?
     var error: String?
     var notice: String?
 
@@ -63,6 +65,8 @@ final class ClientModel {
     func resetSetup() {
         identity = nil
         installation = nil
+        installedServerVersion = nil
+        serverUpdate = nil
     }
 
     func lookup(_ server: VPS) async {
@@ -158,6 +162,7 @@ final class ClientModel {
 
     func clearPassword() {
         password = ""
+        serverUpdate = nil
         users = []
         usersLoaded = false
         error = nil
@@ -172,6 +177,32 @@ final class ClientModel {
             self.users = try await self.fetchUsers(server, password: candidate)
             self.password = candidate
             self.usersLoaded = true
+        }
+    }
+
+    func checkServerUpdate() async -> Bool {
+        guard let server, !needsPassword else { return false }
+        return await work("Проверяем версию сервера…") {
+            self.serverUpdate = nil
+            let installed = try await ServerAccess.installedVersion(server, password: self.password)
+            self.installedServerVersion = installed
+            let architecture = try await ServerAccess.architecture(server, password: self.password)
+            self.serverUpdate = try await ServerRelease.availableUpdate(architecture: architecture, installed: installed)
+            if self.serverUpdate == nil {
+                self.notice = installed == "unversioned"
+                    ? "Релиз с поддержкой обновления пока недоступен."
+                    : "Более новой версии сервера нет."
+            }
+        }
+    }
+
+    func updateServer() async {
+        guard let server, let update = serverUpdate, !needsPassword else { return }
+        await work("Обновляем сервер SFERA…") {
+            self.serverUpdate = nil
+            try await ServerAccess.upgrade(server, password: self.password, update: update)
+            self.installedServerVersion = update.target
+            self.notice = "Сервер обновлён до \(update.target). Профили и ключи сохранены."
         }
     }
 

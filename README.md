@@ -23,6 +23,10 @@ Open **Сайты без VPN** while disconnected and turn **Раздельно�
 
 SFERA excludes the IPv4 addresses it resolves at connection time. If a listed host has no usable IPv4 answer, SFERA reports the host and stops that connection attempt. Correct the list or turn off split tunneling to reconnect. A different DNS resolver, DNS over HTTPS in a browser, or an IP change after connection can still return a different address that remains in the VPN. Add specific subdomains separately and reconnect when addresses change. Sites that share an IP address also share its route. On macOS, reconnect after changing networks to restore the exclusions. The setting is available on macOS, iOS 17+, and Android 13+.
 
+## Updating the server
+
+On macOS, open **Мой сервер → Проверить обновления** and confirm the offered version. The app uses the fixed SFERA server repository and requires a stable release marked for v1 updates. Existing users, profile keys, addresses, and TLS configuration are kept. Active VPN sessions reconnect after a short service restart.
+
 ## GitHub releases
 
 A merge into `main` builds both platforms from the merged commit and publishes `android-<run number>` and `ios-<run number>` prereleases with SHA-256 checksums as soon as each platform finishes. Pull requests build both clients with read-only permissions. Run **Mobile build and release** on `main` for the initial build or a manual rebuild.

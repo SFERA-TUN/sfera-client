@@ -153,6 +153,45 @@ struct ServerAccess: Sendable {
     }
 
     static func install(_ server: VPS, password: String, release: ServerRelease, email: String) async throws {
+        try await deploy(server, password: password, release: release,
+                         action: "/bin/bash install.sh " + shellQuote(server.host) + " " + shellQuote(email))
+        let url = URL(string: "https://\(server.host)/sfera-health")!
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 8
+        let (body, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200, response.url == url,
+              body == Data("sfera-selfhost-v1".utf8) else {
+            throw ClientError("Сервер установлен, но HTTPS недоступен с Mac. Проверьте TCP 443 и сертификат.")
+        }
+    }
+
+    static func installedVersion(_ server: VPS, password: String) async throws -> String {
+        let script = """
+        set -eu
+        test -r /etc/sfera-selfhost/active/users.json
+        if test -d /opt/sfera/.upgrade-recovery; then
+          marker=/opt/sfera/.upgrade-recovery/server-version
+        else
+          marker=/opt/sfera/server-version
+        fi
+        if test -f "$marker"; then cat "$marker"; else printf 'unversioned'; fi
+        """
+        let data = try await execute(server, password: password,
+                                     command: server.elevated + "/bin/sh -c " + shellQuote(script))
+        let tag = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard tag == "unversioned" || ServerRelease.versionParts(tag) != nil else {
+            throw ClientError("На сервере указана неизвестная версия SFERA.")
+        }
+        return tag
+    }
+
+    static func upgrade(_ server: VPS, password: String, update: ServerUpdate) async throws {
+        let release = try await ServerRelease.download(architecture: update.architecture, upgradeTo: update.target)
+        try await deploy(server, password: password, release: release,
+                         action: "/usr/bin/python3 -BE upgrade.py " + shellQuote(update.installed) + " " + shellQuote(update.target))
+    }
+
+    private static func deploy(_ server: VPS, password: String, release: ServerRelease, action: String) async throws {
         let script = """
         set -eu
         umask 077
@@ -162,18 +201,10 @@ struct ServerAccess: Sendable {
         cat > bundle.tar.gz
         printf '%s  %s\\n' '\(release.digest)' bundle.tar.gz | sha256sum -c - >&2
         tar -xzf bundle.tar.gz --no-same-owner --no-same-permissions
-        /bin/bash install.sh \(shellQuote(server.host)) \(shellQuote(email))
+        \(action)
         """
         let command = server.elevated + "/bin/bash -c " + shellQuote(script)
         _ = try await execute(server, password: password, command: command, input: release.payload, timeout: 480)
-        let url = URL(string: "https://\(server.host)/sfera-health")!
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 8
-        let (body, response) = try await URLSession.shared.data(for: request)
-        guard (response as? HTTPURLResponse)?.statusCode == 200, response.url == url,
-              body == Data("sfera-selfhost-v1".utf8) else {
-            throw ClientError("Сервер установлен, но HTTPS недоступен с Mac. Проверьте TCP 443 и сертификат.")
-        }
     }
 
     static func manage(_ server: VPS, password: String, operation: Operation, value: String? = nil) async throws -> Data {
@@ -302,6 +333,12 @@ struct ServerAccess: Sendable {
     }
 }
 
+struct ServerUpdate: Sendable {
+    let installed: String
+    let target: String
+    let architecture: String
+}
+
 struct ServerRelease: Sendable {
     // Set to the official server repository as "owner/repo".
     static let repository: String? = "SFERA-TUN/sfera-server"
@@ -321,7 +358,27 @@ struct ServerRelease: Sendable {
     let digest: String
     let payload: Data
 
-    static func download(architecture: String) async throws -> Self {
+    static func versionParts(_ tag: String) -> [Int]? {
+        guard tag.range(of: #"^server-v(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\z"#,
+                        options: .regularExpression) != nil else { return nil }
+        return tag.dropFirst("server-v".count).split(separator: ".").compactMap { Int($0) }
+    }
+
+    static func availableUpdate(architecture: String, installed: String) async throws -> ServerUpdate? {
+        let release = try await latest()
+        guard let target = versionParts(release.tag_name) else {
+            throw ClientError("GitHub не вернул стабильную версию сервера SFERA.")
+        }
+        if let current = versionParts(installed), !current.lexicographicallyPrecedes(target) { return nil }
+        guard release.assets.contains(where: { $0.name == "sfera-upgrade-v1.txt" }) else {
+            if installed == "unversioned" { return nil }
+            throw ClientError("В последнем релизе нет пакета для безопасного обновления.")
+        }
+        _ = try validatedAsset(release, architecture: architecture)
+        return ServerUpdate(installed: installed, target: release.tag_name, architecture: architecture)
+    }
+
+    private static func latest() async throws -> Release {
         guard let repository else {
             throw ClientError("Источник серверных релизов ещё не задан в этой сборке.")
         }
@@ -337,7 +394,10 @@ struct ServerRelease: Sendable {
         guard (response as? HTTPURLResponse)?.statusCode == 200 else {
             throw ClientError("GitHub не вернул официальный релиз SFERA.")
         }
-        let release = try JSONDecoder().decode(Release.self, from: json)
+        return try JSONDecoder().decode(Release.self, from: json)
+    }
+
+    private static func validatedAsset(_ release: Release, architecture: String) throws -> Asset {
         let filename = "sfera-server-linux-\(architecture)-v1.tar.gz"
         guard release.tag_name.hasPrefix("server-v"),
               let asset = release.assets.first(where: { $0.name == filename }),
@@ -347,6 +407,18 @@ struct ServerRelease: Sendable {
               asset.browser_download_url.host == "github.com" else {
             throw ClientError("В последнем релизе отсутствует совместимый пакет \(filename) с SHA-256.")
         }
+        return asset
+    }
+
+    static func download(architecture: String, upgradeTo: String? = nil) async throws -> Self {
+        let release = try await latest()
+        if let upgradeTo {
+            guard release.tag_name == upgradeTo, release.assets.contains(where: { $0.name == "sfera-upgrade-v1.txt" }) else {
+                throw ClientError("Релиз изменился. Проверьте обновления ещё раз.")
+            }
+        }
+        let asset = try validatedAsset(release, architecture: architecture)
+        guard let digest = asset.digest else { throw ClientError("В пакете отсутствует SHA-256.") }
         let (download, downloadResponse) = try await URLSession.shared.download(from: asset.browser_download_url)
         let file = try FileHandle(forReadingFrom: download)
         defer { try? file.close() }
