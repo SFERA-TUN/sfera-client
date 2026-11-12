@@ -1,0 +1,35 @@
+plugins {
+    id 'com.android.application' version '8.9.2'
+}
+
+android {
+    namespace 'dev.sfera.client'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'dev.sfera.client'
+        minSdk 26
+        targetSdk 35
+        versionCode Integer.parseInt(System.getenv('SFERA_BUILD_NUMBER') ?: '1')
+        versionName '0.1.' + versionCode
+    }
+
+    sourceSets.main.jniLibs.srcDirs = [layout.buildDirectory.dir('sfera-jni')]
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    def keystore = System.getenv('SFERA_ANDROID_KEYSTORE')
+    if (keystore) {
+        signingConfigs {
+            distribution {
+                storeFile file(keystore)
+                storePassword System.getenv('SFERA_ANDROID_STORE_PASSWORD')
+                keyAlias System.getenv('SFERA_ANDROID_KEY_ALIAS')
+                keyPassword System.getenv('SFERA_ANDROID_KEY_PASSWORD')
+            }
+        }
+        buildTypes.release.signingConfig = signingConfigs.distribution
+    }
+}

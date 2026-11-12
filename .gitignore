@@ -1,0 +1,8 @@
+/core/
+/artifacts/
+/mobile/android/.gradle/
+/mobile/android/app/build/
+/mobile/android/local.properties
+/mobile/ios/*.xcodeproj/
+.DS_Store
+__pycache__/

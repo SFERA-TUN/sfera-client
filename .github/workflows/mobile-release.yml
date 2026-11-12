@@ -1,0 +1,172 @@
+name: Mobile build and release
+
+on:
+  pull_request:
+    branches: [main]
+  pull_request_target:
+    branches: [main]
+    types: [closed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SFERA_BUILD_NUMBER: ${{ github.run_number }}
+
+jobs:
+  android:
+    if: github.event_name == 'pull_request' || (github.event_name == 'pull_request_target' && github.event.pull_request.merged) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.merge_commit_sha || github.sha }}
+          persist-credentials: false
+      - id: core
+        run: |
+          ref=$(cat core.ref)
+          [[ $ref =~ ^[a-f0-9]{40}$ ]]
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: SFERA-TUN/sfera-server
+          ref: ${{ steps.core.outputs.ref }}
+          path: core
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;28.1.13356709'
+      - working-directory: core
+        run: rustup target add aarch64-linux-android x86_64-linux-android
+      - name: Build Android APK
+        env:
+          KEYSTORE_B64: ${{ github.event_name != 'pull_request' && secrets.ANDROID_KEYSTORE_B64 || '' }}
+          SFERA_ANDROID_STORE_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.ANDROID_STORE_PASSWORD || '' }}
+          SFERA_ANDROID_KEY_ALIAS: ${{ github.event_name != 'pull_request' && secrets.ANDROID_KEY_ALIAS || '' }}
+          SFERA_ANDROID_KEY_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.ANDROID_KEY_PASSWORD || '' }}
+        run: |
+          mkdir -p distribution
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.1.13356709"
+          if [[ -n "$KEYSTORE_B64" ]]; then
+            umask 077
+            : "${SFERA_ANDROID_STORE_PASSWORD:?}" "${SFERA_ANDROID_KEY_ALIAS:?}" "${SFERA_ANDROID_KEY_PASSWORD:?}"
+            export SFERA_ANDROID_KEYSTORE="$RUNNER_TEMP/sfera-signing.jks"
+            trap 'unlink "$SFERA_ANDROID_KEYSTORE"' EXIT
+            printf '%s' "$KEYSTORE_B64" | base64 --decode > "$SFERA_ANDROID_KEYSTORE"
+            scripts/mobile/build-android.sh assembleRelease
+            cp mobile/android/app/build/outputs/apk/release/app-release.apk distribution/SFERA-Android.apk
+          else
+            scripts/mobile/build-android.sh assembleDebug
+            cp mobile/android/app/build/outputs/apk/debug/app-debug.apk distribution/SFERA-Android-debug.apk
+          fi
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose distribution/*.apk
+          unzip -l distribution/*.apk | grep 'lib/arm64-v8a/libsfera_android.so'
+          unzip -l distribution/*.apk | grep 'lib/x86_64/libsfera_android.so'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: distribution/*.apk
+          if-no-files-found: error
+
+  ios:
+    if: github.event_name == 'pull_request' || (github.event_name == 'pull_request_target' && github.event.pull_request.merged) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.merge_commit_sha || github.sha }}
+          persist-credentials: false
+      - id: core
+        run: |
+          ref=$(cat core.ref)
+          [[ $ref =~ ^[a-f0-9]{40}$ ]]
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: SFERA-TUN/sfera-server
+          ref: ${{ steps.core.outputs.ref }}
+          path: core
+          persist-credentials: false
+      - run: |
+          curl -fsSL https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip -o "$RUNNER_TEMP/xcodegen.zip"
+          printf '%s  %s\n' 4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806 "$RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
+      - working-directory: core
+        run: rustup target add aarch64-apple-ios
+      - name: Build iOS app and Packet Tunnel extension
+        env:
+          SFERA_IOS_P12_B64: ${{ github.event_name != 'pull_request' && secrets.IOS_P12_B64 || '' }}
+          SFERA_IOS_P12_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.IOS_P12_PASSWORD || '' }}
+          SFERA_IOS_APP_PROFILE_B64: ${{ github.event_name != 'pull_request' && secrets.IOS_APP_PROFILE_B64 || '' }}
+          SFERA_IOS_TUNNEL_PROFILE_B64: ${{ github.event_name != 'pull_request' && secrets.IOS_TUNNEL_PROFILE_B64 || '' }}
+        run: |
+          mkdir -p distribution
+          export SFERA_IOS_OUTPUT="$RUNNER_TEMP/sfera-ios"
+          if [[ -n "$SFERA_IOS_P12_B64" || -n "$SFERA_IOS_APP_PROFILE_B64" || -n "$SFERA_IOS_TUNNEL_PROFILE_B64" ]]; then
+            scripts/mobile/sign-ios-ci.sh
+            cp "$SFERA_IOS_OUTPUT/SFERA-iOS.ipa" distribution/
+          else
+            scripts/mobile/build-ios.sh unsigned
+            cp "$SFERA_IOS_OUTPUT/SFERA-iOS-unsigned.xcarchive.zip" distribution/
+          fi
+          test -f "$SFERA_IOS_OUTPUT/SFERA.xcarchive/Products/Applications/SFERA.app/PlugIns/SFERATunnel.appex/Info.plist"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios
+          path: distribution/*
+          if-no-files-found: error
+
+  publish:
+    needs: [android, ios]
+    if: (github.event_name == 'pull_request_target' && github.event.pull_request.merged) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: distribution
+          merge-multiple: true
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.merge_commit_sha || github.sha }}
+        run: |
+          cd distribution
+          shopt -s nullglob
+          assets=(SFERA-Android*.apk SFERA-iOS*)
+          [[ ${#assets[@]} == 2 && $RELEASE_COMMIT =~ ^[a-f0-9]{40}$ ]]
+          sha256sum "${assets[@]}" > SHA256SUMS
+          tag="mobile-$GITHUB_RUN_NUMBER"
+          if draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [[ $draft == true ]]; then
+              gh release upload "$tag" "${assets[@]}" SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
+              gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false
+            fi
+            exit 0
+          fi
+          {
+            printf 'Built from commit `%s`.\n\n' "$RELEASE_COMMIT"
+            if [[ -f SFERA-Android-debug.apk ]]; then
+              printf -- '- Android debug APK is installable. Debug signing may change between runs.\n'
+            else
+              printf -- '- Android APK is signed with the project distribution key.\n'
+            fi
+            if [[ -f SFERA-iOS.ipa ]]; then
+              printf -- '- The signed iOS IPA is for App Store Connect and TestFlight.\n'
+            else
+              printf -- '- The unsigned iOS archive is a build artifact and cannot be installed on an iPhone.\n'
+            fi
+          } > notes.md
+          gh release create "$tag" "${assets[@]}" SHA256SUMS --repo "$GITHUB_REPOSITORY" \
+            --target "$RELEASE_COMMIT" --title "SFERA mobile $GITHUB_RUN_NUMBER" --prerelease --notes-file notes.md
