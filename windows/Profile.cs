@@ -53,7 +53,7 @@ internal sealed record Profile(
     {
         using var stream = File.OpenRead(path);
         var data = new byte[limit + 1];
-        var size = stream.ReadAtLeast(data, data.Length, throwIfEndOfStream: false);
+        var size = stream.ReadAtLeast(data, data.Length, false);
         if (size > limit) throw Invalid();
         return data[..size];
     }
