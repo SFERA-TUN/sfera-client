@@ -29,7 +29,7 @@ On macOS, open **Мой сервер → Проверить обновления
 
 ## GitHub releases
 
-A merge into `main` builds both platforms from the merged commit and publishes `android-<run number>` and `ios-<run number>` prereleases with SHA-256 checksums as soon as each platform finishes. Pull requests build both clients with read-only permissions. Run **Mobile build and release** on `main` for the initial build or a manual rebuild.
+A push to `main`, including a merge, builds both platforms from the pushed commit and publishes `android-<run number>` and `ios-<run number>` prereleases with SHA-256 checksums as soon as each platform finishes. Pull requests build both clients with read-only permissions. Run **Mobile build and release** on `main` for the initial build or a manual rebuild.
 
 Without signing credentials, the workflow publishes an installable Android debug APK and an unsigned iOS XCArchive. Debug APK signatures can differ between runs. An unsigned XCArchive cannot be installed on an iPhone.
 
