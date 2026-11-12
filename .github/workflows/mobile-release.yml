@@ -78,7 +78,7 @@ jobs:
 
   ios:
     if: github.event_name == 'pull_request' || (github.event_name == 'pull_request_target' && github.event.pull_request.merged) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
