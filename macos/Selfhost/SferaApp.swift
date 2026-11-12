@@ -146,6 +146,9 @@ private struct ConnectionView: View {
     let openSetup: () -> Void
     let importProfile: () -> Void
     @State private var removing: VPNProfile?
+    @State private var editingDirectSites = false
+    @AppStorage("directSites.useRussianSites") private var useRussianSites = false
+    @AppStorage("directSites.custom") private var customSites = ""
 
     private var status: (title: String, icon: String, color: Color) {
         switch tunnel.status.state {
@@ -171,6 +174,8 @@ private struct ConnectionView: View {
                         secondary("Настроить сервер", icon: "server.rack", perform: openSetup)
                     }
                     .disabled(!canEdit)
+                    secondary("Сайты без VPN", icon: "arrow.triangle.branch") { editingDirectSites = true }
+                        .disabled(!canEdit)
                 } else {
                     welcome
                     if tunnel.status.canStop {
@@ -190,6 +195,7 @@ private struct ConnectionView: View {
             .frame(maxWidth: 620)
             .frame(maxWidth: .infinity)
         }
+        .sheet(isPresented: $editingDirectSites) { DirectSitesEditor() }
         .alert("Удалить профиль с этого Mac?", isPresented: Binding(
             get: { removing != nil },
             set: { if !$0 { removing = nil } }
@@ -306,7 +312,8 @@ private struct ConnectionView: View {
             tunnel.perform("stop")
         } else {
             do {
-                tunnel.perform("start", profile: try JSONEncoder().encode(profile))
+                tunnel.perform("start", profile: try JSONEncoder().encode(profile),
+                               directSites: DirectSites(useRussianSites: useRussianSites, custom: customSites))
             } catch {
                 tunnel.actionError = "Не удалось прочитать профиль."
             }

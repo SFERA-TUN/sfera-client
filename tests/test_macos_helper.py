@@ -106,6 +106,32 @@ class MacOSHelperTests(unittest.TestCase):
             helper.remove_host_route(entry)
         command.assert_any_call(["/sbin/route", "-n", "delete", "-host", "192.0.2.1"])
 
+    def test_direct_route_is_journaled_and_removed_during_recovery(self):
+        self.supervisor.profile = {"directIPv4": ["77.88.55.242"]}
+        self.supervisor.original_gateway = "192.168.1.1"
+        self.supervisor.original_interface = "en1"
+        self.netstat = "default 192.168.1.1 UGScg en1\n"
+        with mock.patch.object(helper, "run", side_effect=self.network_command) as command:
+            self.supervisor.ensure_no_route_conflicts()
+            entry = self.supervisor.mutations["routes"]["direct"][0]
+            self.supervisor.pin_host_route(entry)
+            command.assert_any_call(["/sbin/route", "-n", "add", "-host", "77.88.55.242",
+                                     "192.168.1.1", "-ifp", "en1"])
+            record = json.loads(self.journal.read_text())
+            self.netstat += "77.88.55.242 192.168.1.1 UGHS en1\n"
+            self.assertEqual(helper.recover_stale_session(record, self.runtime), [])
+            command.assert_any_call(["/sbin/route", "-n", "delete", "-host", "77.88.55.242"])
+
+    def test_direct_routes_reject_ranges_private_addresses_and_tunnel_dns(self):
+        profile = {"version": 1, "host": "8.8.4.4", "peerIP": "10.203.0.6", "token": "b" * 64}
+        for value in ("0.0.0.0/0", "192.168.1.1", "1.1.1.1", "224.0.0.1"):
+            with self.subTest(value=value):
+                profile["directIPv4"] = [value]
+                data = io.BytesIO(json.dumps(profile).encode())
+                with mock.patch.object(helper.sys, "stdin", SimpleNamespace(buffer=data)):
+                    with self.assertRaises(helper.HelperError):
+                        helper.read_profile()
+
     def test_handoff_leaves_an_externally_replaced_host_route_alone(self):
         self.supervisor.mutations = self.mutations()
         self.netstat = ("default 172.20.10.1 UGScg en5\n"

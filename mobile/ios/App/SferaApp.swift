@@ -61,7 +61,7 @@ private final class Connection {
         }
     }
 
-    func toggle() async {
+    func toggle(directSites: DirectSites) async {
         guard !busy else { return }
         error = nil
         if active {
@@ -73,10 +73,12 @@ private final class Connection {
         busy = true
         defer { busy = false }
         do {
+            let addresses = try await Task.detached(priority: .userInitiated) { try directSites.resolve() }.value
             let manager = self.manager ?? NETunnelProviderManager()
             let configuration = NETunnelProviderProtocol()
             configuration.providerBundleIdentifier = extensionID
             configuration.serverAddress = profile.host
+            configuration.providerConfiguration = ["directIPv4": addresses]
             manager.protocolConfiguration = configuration
             manager.localizedDescription = "SFERA"
             manager.isEnabled = true
@@ -94,6 +96,9 @@ private final class Connection {
 private struct ConnectionView: View {
     @State private var model = Connection()
     @State private var importing = false
+    @State private var editingDirectSites = false
+    @AppStorage("directSites.useRussianSites") private var useRussianSites = false
+    @AppStorage("directSites.custom") private var customSites = ""
 
     private let accent = Color(red: 0.96, green: 0.75, blue: 0.48)
     private let panel = Color(red: 0.10, green: 0.11, blue: 0.13)
@@ -125,7 +130,7 @@ private struct ConnectionView: View {
                         .font(.callout.weight(.semibold))
                         .foregroundStyle(status.2)
                     Button {
-                        Task { await model.toggle() }
+                        Task { await model.toggle(directSites: DirectSites(useRussianSites: useRussianSites, custom: customSites)) }
                     } label: {
                         Text(model.active ? "Отключить VPN" : "Подключить VPN")
                             .frame(maxWidth: .infinity)
@@ -139,6 +144,10 @@ private struct ConnectionView: View {
                 .padding(20)
                 .background(panel, in: RoundedRectangle(cornerRadius: 16))
                 Button("Импортировать профиль", systemImage: "square.and.arrow.down") { importing = true }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    .disabled(model.active || model.busy)
+                Button("Сайты без VPN", systemImage: "arrow.triangle.branch") { editingDirectSites = true }
                     .buttonStyle(.bordered)
                     .controlSize(.large)
                     .disabled(model.active || model.busy)
@@ -160,6 +169,7 @@ private struct ConnectionView: View {
                 if (error as? CocoaError)?.code != .userCancelled { model.error = error.localizedDescription }
             }
         }
+        .sheet(isPresented: $editingDirectSites) { DirectSitesEditor() }
         .task { await model.load() }
         .onReceive(NotificationCenter.default.publisher(for: .NEVPNStatusDidChange)) { _ in
             model.refresh()

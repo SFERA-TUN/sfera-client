@@ -34,6 +34,7 @@ targets:
       - path: Tunnel
         excludes: ["*.entitlements", Info.plist]
       - path: Shared
+        excludes: ["DirectSites.swift"]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.sfera.client.tunnel

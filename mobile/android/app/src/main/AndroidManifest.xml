@@ -3,7 +3,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <application android:label="SFERA" android:allowBackup="false"
-        android:theme="@style/AppTheme" android:icon="@drawable/sfera_icon" android:usesCleartextTraffic="false">
+        android:theme="@style/AppTheme" android:icon="@mipmap/sfera_launcher" android:usesCleartextTraffic="false">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

@@ -64,7 +64,7 @@ final class TunnelModel: ObservableObject {
         }
     }
 
-    func perform(_ action: String, profile: Data? = nil) {
+    func perform(_ action: String, profile: Data? = nil, directSites: DirectSites = DirectSites()) {
         guard !pending else { return }
         if action == "stop", !tunnelActive { return }
         pending = true
@@ -72,7 +72,21 @@ final class TunnelModel: ObservableObject {
         if action == "start", !prepareRuntimeDirectory() { pending = false; return }
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let result = Self.runHelper(action: action, profile: profile)
+            let result: String?
+            do {
+                var payload = profile
+                if let profile, action == "start" {
+                    let addresses = try directSites.resolve()
+                    if !addresses.isEmpty,
+                       var message = try JSONSerialization.jsonObject(with: profile) as? [String: Any] {
+                        message["directIPv4"] = addresses
+                        payload = try JSONSerialization.data(withJSONObject: message)
+                    }
+                }
+                result = Self.runHelper(action: action, profile: payload)
+            } catch {
+                result = error.localizedDescription
+            }
             Task { @MainActor in
                 guard let self else { return }
                 self.pending = false

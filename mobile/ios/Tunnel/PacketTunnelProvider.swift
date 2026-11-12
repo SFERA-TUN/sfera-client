@@ -34,7 +34,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 self.startReply = completionHandler
                 self.generation += 1
                 let attempt = self.generation
-                self.setTunnelNetworkSettings(Self.settings(profile)) { error in
+                let configuration = self.protocolConfiguration as? NETunnelProviderProtocol
+                let addresses = configuration?.providerConfiguration?["directIPv4"] as? [String] ?? []
+                self.setTunnelNetworkSettings(Self.settings(profile, directIPv4: addresses)) { error in
                     self.queue.async {
                         guard self.generation == attempt else { return }
                         if let error { self.end(error); return }
@@ -58,11 +60,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
-    private static func settings(_ profile: Profile) -> NEPacketTunnelNetworkSettings {
+    private static func settings(_ profile: Profile, directIPv4: [String]) -> NEPacketTunnelNetworkSettings {
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: profile.host)
         let ipv4 = NEIPv4Settings(addresses: [profile.peerIP], subnetMasks: ["255.255.255.252"])
         ipv4.includedRoutes = [.default()]
-        ipv4.excludedRoutes = [NEIPv4Route(destinationAddress: profile.host, subnetMask: "255.255.255.255")]
+        ipv4.excludedRoutes = Set(directIPv4 + [profile.host]).sorted().map {
+            NEIPv4Route(destinationAddress: $0, subnetMask: "255.255.255.255")
+        }
         settings.ipv4Settings = ipv4
         // SFERA currently carries IPv4. Route IPv6 to the extension and drop it.
         let ipv6 = NEIPv6Settings(addresses: ["fd5e:fa20:fa20::2"], networkPrefixLengths: [64])

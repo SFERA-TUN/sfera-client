@@ -8,6 +8,8 @@
     <string>SFERA</string>
     <key>CFBundleIdentifier</key>
     <string>dev.sfera.client</string>
+    <key>CFBundleIconFile</key>
+    <string>SFERA.icns</string>
     <key>CFBundleExecutable</key>
     <string>SFERA</string>
     <key>CFBundleVersion</key>
