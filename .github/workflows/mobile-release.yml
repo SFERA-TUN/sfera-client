@@ -42,8 +42,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
-      - uses: android-actions/setup-android@v3
-      - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;28.1.13356709'
+      - name: Install Android build packages
+        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" "ndk;28.1.13356709"'
       - working-directory: core
         run: rustup target add aarch64-linux-android x86_64-linux-android
       - name: Build Android APK
