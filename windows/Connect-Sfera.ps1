@@ -41,6 +41,41 @@ function Add-Route([string] $Prefix, [int] $InterfaceIndex, [string] $NextHop) {
     $routes.Add($route)
 }
 
+function Stop-Transport([Diagnostics.Process] $Process) {
+    if ($Process.HasExited) { return }
+    # Give the transport time to close its Wintun adapter through its Ctrl+C handler.
+    try {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class SferaConsole
+{
+    [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+    [DllImport("kernel32.dll")] public static extern bool AttachConsole(uint processId);
+    [DllImport("kernel32.dll")] public static extern bool FreeConsole();
+    [DllImport("kernel32.dll")] public static extern bool SetConsoleCtrlHandler(IntPtr handler, bool add);
+    [DllImport("kernel32.dll")] public static extern bool GenerateConsoleCtrlEvent(uint controlEvent, uint processGroup);
+}
+'@
+        if ([SferaConsole]::GetConsoleWindow() -eq [IntPtr]::Zero -and
+            [SferaConsole]::AttachConsole([uint32]$Process.Id)) {
+            try {
+                if ([SferaConsole]::SetConsoleCtrlHandler([IntPtr]::Zero, $true) -and
+                    [SferaConsole]::GenerateConsoleCtrlEvent(0, 0) -and $Process.WaitForExit(3500)) { return }
+            } finally {
+                $null = [SferaConsole]::FreeConsole()
+                $null = [SferaConsole]::SetConsoleCtrlHandler([IntPtr]::Zero, $false)
+            }
+        }
+    } catch {
+        # A process without a console still needs to stop.
+    }
+    if (-not $Process.HasExited) {
+        Stop-Process -InputObject $Process -Force -ErrorAction SilentlyContinue
+        $null = $Process.WaitForExit(3000)
+    }
+}
+
 try {
     $parent = Get-Process -Id $config.parent
     try { $ownsMutex = $mutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $ownsMutex = $true }
@@ -74,7 +109,7 @@ try {
         '--status-file', $transportFile)
     # PowerShell 5.1 joins ArgumentList into one native command line.
     $quoted = ($arguments | ForEach-Object { '"' + $_ + '"' }) -join ' '
-    $client = Start-Process -FilePath $exe -ArgumentList $quoted -NoNewWindow -PassThru
+    $client = Start-Process -FilePath $exe -ArgumentList $quoted -WindowStyle Hidden -PassThru
     $clock = [Diagnostics.Stopwatch]::StartNew()
     $adapter = $null
     while (-not $client.HasExited -and $clock.Elapsed.TotalSeconds -lt 35) {
@@ -131,10 +166,7 @@ try {
     for ($i = $routes.Count - 1; $i -ge 0; $i--) {
         Remove-NetRoute -InputObject $routes[$i] -Confirm:$false -ErrorAction SilentlyContinue
     }
-    if ($client -and -not $client.HasExited) {
-        Stop-Process -Id $client.Id -Force -ErrorAction SilentlyContinue
-        $null = $client.WaitForExit(3000)
-    }
+    if ($client) { Stop-Transport $client }
     Remove-Item -LiteralPath $tokenFile -Force -ErrorAction SilentlyContinue
     if ($ownsMutex) { $mutex.ReleaseMutex() }
     $mutex.Dispose()
