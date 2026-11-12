@@ -3,9 +3,8 @@ name: Mobile build and release
 on:
   pull_request:
     branches: [main]
-  pull_request_target:
+  push:
     branches: [main]
-    types: [closed]
   workflow_dispatch:
 
 permissions:
@@ -16,13 +15,12 @@ env:
 
 jobs:
   android:
-    if: github.event_name == 'pull_request' || (github.event_name == 'pull_request_target' && github.event.pull_request.merged) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.merge_commit_sha || github.sha }}
           persist-credentials: false
       - id: core
         run: |
@@ -77,13 +75,12 @@ jobs:
           if-no-files-found: error
 
   ios:
-    if: github.event_name == 'pull_request' || (github.event_name == 'pull_request_target' && github.event.pull_request.merged) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
-    runs-on: macos-15
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    runs-on: macos-15-intel
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.merge_commit_sha || github.sha }}
           persist-credentials: false
       - id: core
         run: |
@@ -128,14 +125,13 @@ jobs:
 
   publish-android:
     needs: android
-    if: (github.event_name == 'pull_request_target' && github.event.pull_request.merged) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.merge_commit_sha || github.sha }}
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
@@ -145,19 +141,18 @@ jobs:
         working-directory: distribution
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_COMMIT: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.merge_commit_sha || github.sha }}
+          RELEASE_COMMIT: ${{ github.sha }}
         run: ../scripts/mobile/publish.sh android
 
   publish-ios:
     needs: ios
-    if: (github.event_name == 'pull_request_target' && github.event.pull_request.merged) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.merge_commit_sha || github.sha }}
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
@@ -167,5 +162,5 @@ jobs:
         working-directory: distribution
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_COMMIT: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.merge_commit_sha || github.sha }}
+          RELEASE_COMMIT: ${{ github.sha }}
         run: ../scripts/mobile/publish.sh ios
