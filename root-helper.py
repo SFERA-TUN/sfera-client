@@ -358,7 +358,7 @@ def recover_stale_session(record: dict[str, Any], runtime: Path) -> list[str]:
     errors: list[str] = terminate_recorded_children(record)
     routes = mutations.get("routes") or {}
     for entry in reversed(routes.get("splits") or []):
-        if entry.get("attempted"):
+        if entry.get("attempted") and not entry.get("direct"):
             try:
                 remove_split_route_entry(entry)
             except Exception as exc:
@@ -381,9 +381,14 @@ def remove_split_route_entry(entry: dict[str, Any]) -> None:
         run(["/sbin/route", "-n", "delete", "-net", entry["cidr"]])
 
 
+def direct_routes(routes: dict[str, Any]) -> list[dict[str, Any]]:
+    # Also read journals from the first split-tunneling preview.
+    return [*routes.get("direct", []), *(entry for entry in routes.get("splits", []) if entry.get("direct"))]
+
+
 def restore_host_routes(routes: dict[str, Any]) -> list[str]:
     errors: list[str] = []
-    for entry in [*routes.get("direct", []), routes.get("host")]:
+    for entry in [*direct_routes(routes), routes.get("host")]:
         if entry and entry.get("attempted") and not entry.get("existing"):
             try:
                 remove_host_route(entry)
@@ -398,7 +403,10 @@ def remove_host_route(entry: dict[str, Any]) -> None:
     cidr = ipaddress.IPv4Network(entry["cidr"])
     route = routes.get(str(cidr))
     if route and host_route_matches(entry, route):
-        run(["/sbin/route", "-n", "delete", "-host", str(cidr.network_address)])
+        if entry.get("direct"):
+            run(["/sbin/route", "-n", "delete", "-net", str(cidr)])
+        else:
+            run(["/sbin/route", "-n", "delete", "-host", str(cidr.network_address)])
 
 
 def host_route_matches(entry: dict[str, Any], route: dict[str, str]) -> bool:
@@ -642,7 +650,7 @@ class Supervisor:
         self.ensure_no_route_conflicts()
         routes = self.mutations["routes"]
         self.pin_host_route(routes["host"])
-        for entry in routes["direct"]:
+        for entry in direct_routes(routes):
             self.pin_host_route(entry)
         self.disable_ipv6()
         self.configure_dns()
@@ -697,7 +705,7 @@ class Supervisor:
     def refresh_underlay(self) -> None:
         routes = self.mutations["routes"]
         host = routes["host"]
-        direct = routes.get("direct", [])
+        direct = direct_routes(routes)
         if host["existing"] and not direct:
             return
         table = run(["/usr/sbin/netstat", "-rn", "-f", "inet"]).stdout
@@ -709,7 +717,8 @@ class Supervisor:
             errors = restore_host_routes({"direct": direct})
             if errors:
                 raise HelperError("; ".join(errors))
-            routes["direct"] = []
+            routes.pop("direct", None)
+            routes["splits"] = [entry for entry in routes.get("splits", []) if not entry.get("direct")]
             self.checkpoint()
         if host["existing"]:
             return
@@ -775,8 +784,12 @@ class Supervisor:
 
         self.mutations["routes"] = {
             "host": host_entry(server),
-            "direct": [host_entry(f"{address}/32") for address in (self.profile or {}).get("directIPv4", [])],
-            "splits": [{"cidr": cidr, "interface": None, "attempted": False} for cidr in SPLIT_ROUTES],
+            # Older helpers recover every attempted net route in "splits".
+            "splits": [
+                *({"cidr": cidr, "interface": None, "attempted": False} for cidr in SPLIT_ROUTES),
+                *(dict(host_entry(f"{address}/32"), direct=True)
+                  for address in (self.profile or {}).get("directIPv4", [])),
+            ],
         }
         self.checkpoint()
 
@@ -785,9 +798,8 @@ class Supervisor:
             return
         entry["attempted"] = True
         self.checkpoint()
-        address = entry["cidr"].split("/")[0]
-        run(["/sbin/route", "-n", "add", "-host", address,
-             entry["gateway"], "-ifp", entry["interface"]])
+        destination = ["-net", entry["cidr"]] if entry.get("direct") else ["-host", entry["cidr"].split("/")[0]]
+        run(["/sbin/route", "-n", "add", *destination, entry["gateway"], "-ifp", entry["interface"]])
 
     def disable_ipv6(self) -> None:
         network = self.mutations["network"]
@@ -911,6 +923,8 @@ class Supervisor:
         if not self.interface:
             raise HelperError("Cannot install split routes without a SFERA utun interface.")
         for entry in self.mutations["routes"]["splits"]:
+            if entry.get("direct"):
+                continue
             entry["interface"] = self.interface
             entry["attempted"] = True
             self.checkpoint()
@@ -957,7 +971,7 @@ class Supervisor:
         errors: list[str] = []
         routes = self.mutations.get("routes", {})
         for entry in reversed(routes.get("splits", [])):
-            if entry.get("attempted"):
+            if entry.get("attempted") and not entry.get("direct"):
                 try:
                     self.remove_split_route(entry)
                 except Exception as exc:

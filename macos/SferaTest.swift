@@ -71,45 +71,48 @@ final class TunnelModel: ObservableObject {
         actionError = nil
         if action == "start", !prepareRuntimeDirectory() { pending = false; return }
 
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        Task {
             let result: String?
             do {
-                var payload = profile
-                if let profile, action == "start" {
+                let payload = try await Task.detached(priority: .userInitiated) {
+                    guard let profile, action == "start" else { return profile }
                     let addresses = try directSites.resolve()
-                    if !addresses.isEmpty,
-                       var message = try JSONSerialization.jsonObject(with: profile) as? [String: Any] {
-                        message["directIPv4"] = addresses
-                        payload = try JSONSerialization.data(withJSONObject: message)
-                    }
+                    guard !addresses.isEmpty,
+                          var message = try JSONSerialization.jsonObject(with: profile) as? [String: Any]
+                    else { return profile }
+                    message["directIPv4"] = addresses
+                    return try JSONSerialization.data(withJSONObject: message)
+                }.value
+                if isQuitting && action == "start" {
+                    result = nil
+                } else {
+                    result = await Task.detached(priority: .userInitiated) {
+                        Self.runHelper(action: action, profile: payload)
+                    }.value
                 }
-                result = Self.runHelper(action: action, profile: payload)
             } catch {
                 result = error.localizedDescription
             }
-            Task { @MainActor in
-                guard let self else { return }
-                self.pending = false
-                if let result { self.actionError = result }
-                self.refresh()
-                if self.isQuitting {
-                    if action == "stop" {
-                        if result != nil {
-                            self.isQuitting = false
-                            NSApp.reply(toApplicationShouldTerminate: false)
-                        } else if self.tunnelActive {
-                            self.waitingForQuitDisconnect = true
-                            self.quitDeadline = Date().addingTimeInterval(30)
-                        } else {
-                            self.isQuitting = false
-                            NSApp.reply(toApplicationShouldTerminate: true)
-                        }
-                    } else if self.tunnelActive {
-                        self.perform("stop")
+            pending = false
+            if let result { actionError = result }
+            refresh()
+            if isQuitting {
+                if action == "stop" {
+                    if result != nil {
+                        isQuitting = false
+                        NSApp.reply(toApplicationShouldTerminate: false)
+                    } else if tunnelActive {
+                        waitingForQuitDisconnect = true
+                        quitDeadline = Date().addingTimeInterval(30)
                     } else {
-                        self.isQuitting = false
+                        isQuitting = false
                         NSApp.reply(toApplicationShouldTerminate: true)
                     }
+                } else if tunnelActive {
+                    perform("stop")
+                } else {
+                    isQuitting = false
+                    NSApp.reply(toApplicationShouldTerminate: true)
                 }
             }
         }

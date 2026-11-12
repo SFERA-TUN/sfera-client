@@ -22,7 +22,7 @@ final class DirectSites {
     private static final String RUSSIAN_SITES =
         "yandex.ru ya.ru yastatic.net dzen.ru vk.com vk.ru vkvideo.ru userapi.com vkuser.net " +
         "mail.ru imgsmail.ru ok.ru gosuslugi.ru nalog.gov.ru mos.ru sberbank.ru sber.ru " +
-        "tbank.ru tinkoff.ru alfabank.ru vtb.ru ozon.ru ozonusercontent.com wildberries.ru " +
+        "tbank.ru tinkoff.ru alfabank.ru vtb.ru ozon.ru cdn1.ozone.ru wildberries.ru " +
         "wbstatic.net avito.ru avito.st auto.ru 2gis.ru rutube.ru rbc.ru hh.ru";
 
     final boolean enabled;
@@ -55,9 +55,13 @@ final class DirectSites {
         String limit = "В списке может быть не более 64 сайтов, включая готовый набор.";
         if (custom.getBytes(StandardCharsets.UTF_8).length > 8192) throw new IllegalArgumentException(limit);
         var hosts = new TreeSet<String>();
-        String input = useRussianSites ? RUSSIAN_SITES + " " + custom : custom;
-        for (String item : input.split("[\\s,;]+")) {
-            if (item.isEmpty()) continue;
+        var entries = new ArrayList<String>();
+        if (useRussianSites) Collections.addAll(entries, RUSSIAN_SITES.split(" "));
+        for (String line : custom.split("\\R")) {
+            String entry = line.trim();
+            if (!entry.isEmpty()) entries.add(entry);
+        }
+        for (String item : entries) {
             try {
                 URI url = URI.create(item.contains("://") ? item : "https://" + item);
                 String authority = url.getAuthority();
@@ -89,10 +93,20 @@ final class DirectSites {
             var lookups = new ArrayList<Callable<List<String>>>();
             for (String host : hosts) lookups.add(() -> ipv4(host));
             var addresses = new TreeSet<String>();
-            for (var lookup : pool.invokeAll(lookups, 12, TimeUnit.SECONDS)) {
-                if (!lookup.isCancelled()) addresses.addAll(lookup.get());
+            var unresolved = new ArrayList<String>();
+            var results = pool.invokeAll(lookups, 12, TimeUnit.SECONDS);
+            for (int i = 0; i < hosts.size(); i++) {
+                var result = results.get(i);
+                List<String> ips = result.isCancelled() ? Collections.emptyList() : result.get();
+                if (ips.isEmpty()) unresolved.add(hosts.get(i));
+                addresses.addAll(ips);
             }
-            if (addresses.isEmpty()) throw new IOException("Не удалось найти IPv4-адреса сайтов. Проверьте список и сеть.");
+            if (!unresolved.isEmpty()) {
+                int displayed = Math.min(5, unresolved.size());
+                String suffix = unresolved.size() > displayed ? " и ещё " + (unresolved.size() - displayed) : "";
+                throw new IOException("Нет IPv4 для: " + String.join(", ", unresolved.subList(0, displayed))
+                    + suffix + ". Исправьте список или отключите раздельное туннелирование.");
+            }
             if (addresses.size() > 96) throw new IOException("Найдено больше 96 IPv4-адресов. Сократите список сайтов.");
             return new ArrayList<>(addresses);
         } finally {

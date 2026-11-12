@@ -137,7 +137,7 @@ public final class MainActivity extends Activity {
         input.setText(saved.custom);
         add(fields, input, 12);
         add(fields, text("Исключения действуют на IPv4-адреса, найденные при подключении. " +
-            "Сайты с общим IP тоже могут пойти напрямую. Поддомены добавляются отдельно.",
+            "Сайты с общим IP тоже могут пойти напрямую. Если IP изменился, переподключитесь. Поддомены добавляются отдельно.",
             13, MUTED, false), 12);
         var scroll = new ScrollView(this);
         scroll.addView(fields);

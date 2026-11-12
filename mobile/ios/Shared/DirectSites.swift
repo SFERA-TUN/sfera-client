@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 import os
 
-struct DirectSites: Sendable {
+struct DirectSites: Codable, Sendable {
     var enabled = false
     var useRussianSites = false
     var custom = ""
@@ -11,12 +11,13 @@ struct DirectSites: Sendable {
     private static let russianSites = """
         yandex.ru ya.ru yastatic.net dzen.ru vk.com vk.ru vkvideo.ru userapi.com vkuser.net
         mail.ru imgsmail.ru ok.ru gosuslugi.ru nalog.gov.ru mos.ru sberbank.ru sber.ru
-        tbank.ru tinkoff.ru alfabank.ru vtb.ru ozon.ru ozonusercontent.com wildberries.ru
+        tbank.ru tinkoff.ru alfabank.ru vtb.ru ozon.ru cdn1.ozone.ru wildberries.ru
         wbstatic.net avito.ru avito.st auto.ru 2gis.ru rutube.ru rbc.ru hh.ru
         """
 
     func hosts() throws -> [String] {
-        let tokens = custom.components(separatedBy: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ",;")))
+        let tokens = custom.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
         guard custom.utf8.count <= 8192 else { throw Failure.tooManySites }
         let preset = useRussianSites ? Self.russianSites.split(whereSeparator: \.isWhitespace).map(String.init) : []
@@ -42,19 +43,32 @@ struct DirectSites: Sendable {
     }
 
     func resolve() throws -> [String] {
+        try resolve(lookup: { Self.ipv4(for: $0) })
+    }
+
+    func resolve(lookup: @escaping @Sendable (String) -> [String]) throws -> [String] {
         guard enabled else { return [] }
         let hosts = try hosts()
         guard !hosts.isEmpty else { return [] }
-        let result = OSAllocatedUnfairLock(initialState: Set<String>())
+        let results = OSAllocatedUnfairLock(initialState: [String: [String]]())
         let workers = min(8, hosts.count)
-        DispatchQueue.concurrentPerform(iterations: workers) { worker in
-            for index in stride(from: worker, to: hosts.count, by: workers) {
-                let addresses = Self.ipv4(for: hosts[index])
-                result.withLock { $0.formUnion(addresses) }
+        let work = DispatchGroup()
+        let deadline = DispatchTime.now() + .seconds(12)
+        for worker in 0..<workers {
+            DispatchQueue.global(qos: .userInitiated).async(group: work) {
+                for index in stride(from: worker, to: hosts.count, by: workers) {
+                    guard DispatchTime.now() < deadline else { break }
+                    let host = hosts[index]
+                    let addresses = lookup(host)
+                    results.withLock { $0[host] = addresses }
+                }
             }
         }
-        let addresses = result.withLock { $0.sorted() }
-        guard !addresses.isEmpty else { throw Failure.noAddresses }
+        _ = work.wait(timeout: deadline)
+        let resolved = results.withLock { $0 }
+        let unresolved = hosts.filter { resolved[$0]?.isEmpty != false }
+        guard unresolved.isEmpty else { throw Failure.unresolved(unresolved) }
+        let addresses = Set(resolved.values.joined()).sorted()
         guard addresses.count <= 96 else { throw Failure.tooManyAddresses }
         return addresses
     }
@@ -91,13 +105,16 @@ struct DirectSites: Sendable {
     }
 
     enum Failure: LocalizedError {
-        case invalidSite(String), tooManySites, noAddresses, tooManyAddresses
+        case invalidSite(String), tooManySites, unresolved([String]), tooManyAddresses
 
         var errorDescription: String? {
             switch self {
             case let .invalidSite(site): "Некорректный сайт: \(site.prefix(120))"
             case .tooManySites: "В списке может быть не более 64 сайтов, включая готовый набор."
-            case .noAddresses: "Не удалось найти IPv4-адреса сайтов. Проверьте список и сеть."
+            case let .unresolved(hosts):
+                "Нет IPv4 для: \(hosts.prefix(5).joined(separator: ", "))"
+                    + (hosts.count > 5 ? " и ещё \(hosts.count - 5)." : ".")
+                    + " Исправьте список или отключите раздельное туннелирование."
             case .tooManyAddresses: "Найдено больше 96 IPv4-адресов. Сократите список сайтов."
             }
         }

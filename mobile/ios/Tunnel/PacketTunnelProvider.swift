@@ -31,19 +31,19 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 guard let profile = try ProfileStore.load(),
                       (self.protocolConfiguration as? NETunnelProviderProtocol)?.serverAddress == profile.host
                 else { throw ProfileError.invalid }
+                let sites = try ProfileStore.loadDirectSites() ?? DirectSites()
                 self.startReply = completionHandler
                 self.generation += 1
                 let attempt = self.generation
-                let configuration = self.protocolConfiguration as? NETunnelProviderProtocol
-                let addresses = configuration?.providerConfiguration?["directIPv4"] as? [String] ?? []
-                self.setTunnelNetworkSettings(Self.settings(profile, directIPv4: addresses)) { error in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let result = Result { try sites.resolve() }
                     self.queue.async {
                         guard self.generation == attempt else { return }
-                        if let error { self.end(error); return }
                         do {
-                            try self.startTransport(profile)
+                            let addresses = try result.get()
+                            self.applySettings(profile, directIPv4: addresses, attempt: attempt)
                         } catch {
-                            self.end(error)
+                            self.end(Self.failure(error.localizedDescription))
                         }
                     }
                 }
@@ -57,6 +57,20 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         queue.async {
             self.end(Self.failure("Подключение отменено."))
             completionHandler()
+        }
+    }
+
+    private func applySettings(_ profile: Profile, directIPv4: [String], attempt: Int) {
+        setTunnelNetworkSettings(Self.settings(profile, directIPv4: directIPv4)) { error in
+            self.queue.async {
+                guard self.generation == attempt else { return }
+                if let error { self.end(error); return }
+                do {
+                    try self.startTransport(profile)
+                } catch {
+                    self.end(error)
+                }
+            }
         }
     }
 

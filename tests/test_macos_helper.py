@@ -113,14 +113,18 @@ class MacOSHelperTests(unittest.TestCase):
         self.netstat = "default 192.168.1.1 UGScg en1\n"
         with mock.patch.object(helper, "run", side_effect=self.network_command) as command:
             self.supervisor.ensure_no_route_conflicts()
-            entry = self.supervisor.mutations["routes"]["direct"][0]
+            entry = helper.direct_routes(self.supervisor.mutations["routes"])[0]
             self.supervisor.pin_host_route(entry)
-            command.assert_any_call(["/sbin/route", "-n", "add", "-host", "77.88.55.242",
+            command.assert_any_call(["/sbin/route", "-n", "add", "-net", "77.88.55.242/32",
                                      "192.168.1.1", "-ifp", "en1"])
             record = json.loads(self.journal.read_text())
             self.netstat += "77.88.55.242 192.168.1.1 UGHS en1\n"
+            legacy_entry = next(item for item in record["mutations"]["routes"]["splits"] if item["attempted"])
+            helper.remove_split_route_entry(legacy_entry)
+            command.assert_any_call(["/sbin/route", "-n", "delete", "-net", "77.88.55.242/32"])
+            command.reset_mock()
             self.assertEqual(helper.recover_stale_session(record, self.runtime), [])
-            command.assert_any_call(["/sbin/route", "-n", "delete", "-host", "77.88.55.242"])
+            command.assert_any_call(["/sbin/route", "-n", "delete", "-net", "77.88.55.242/32"])
 
     def test_direct_routes_reject_ranges_private_addresses_and_tunnel_dns(self):
         profile = {"version": 1, "host": "8.8.4.4", "peerIP": "10.203.0.6", "token": "b" * 64}

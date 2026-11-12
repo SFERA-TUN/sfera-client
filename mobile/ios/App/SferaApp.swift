@@ -42,7 +42,18 @@ private final class Connection {
     }
 
     func refresh() {
+        let previous = status
         status = manager?.connection.status ?? .invalid
+        if [.connecting, .reasserting].contains(previous), status == .disconnected,
+           let connection = manager?.connection {
+            connection.fetchLastDisconnectError { [weak self] failure in
+                guard let failure else { return }
+                Task { @MainActor in
+                    guard let self, self.status == .disconnected else { return }
+                    self.error = failure.localizedDescription
+                }
+            }
+        }
     }
 
     func importFile(_ url: URL) {
@@ -61,7 +72,7 @@ private final class Connection {
         }
     }
 
-    func toggle(directSites: DirectSites) async {
+    func toggle() async {
         guard !busy else { return }
         error = nil
         if active {
@@ -73,12 +84,10 @@ private final class Connection {
         busy = true
         defer { busy = false }
         do {
-            let addresses = try await Task.detached(priority: .userInitiated) { try directSites.resolve() }.value
             let manager = self.manager ?? NETunnelProviderManager()
             let configuration = NETunnelProviderProtocol()
             configuration.providerBundleIdentifier = extensionID
             configuration.serverAddress = profile.host
-            configuration.providerConfiguration = ["directIPv4": addresses]
             manager.protocolConfiguration = configuration
             manager.localizedDescription = "SFERA"
             manager.isEnabled = true
@@ -97,9 +106,6 @@ private struct ConnectionView: View {
     @State private var model = Connection()
     @State private var importing = false
     @State private var editingDirectSites = false
-    @AppStorage("directSites.enabled") private var directSitesEnabled = false
-    @AppStorage("directSites.useRussianSites") private var useRussianSites = false
-    @AppStorage("directSites.custom") private var customSites = ""
 
     private let accent = Color(red: 0.96, green: 0.75, blue: 0.48)
     private let panel = Color(red: 0.10, green: 0.11, blue: 0.13)
@@ -131,7 +137,7 @@ private struct ConnectionView: View {
                         .font(.callout.weight(.semibold))
                         .foregroundStyle(status.2)
                     Button {
-                        Task { await model.toggle(directSites: DirectSites(enabled: directSitesEnabled, useRussianSites: useRussianSites, custom: customSites)) }
+                        Task { await model.toggle() }
                     } label: {
                         Text(model.active ? "Отключить VPN" : "Подключить VPN")
                             .frame(maxWidth: .infinity)
