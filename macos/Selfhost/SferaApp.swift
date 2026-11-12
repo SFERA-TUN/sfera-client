@@ -147,6 +147,7 @@ private struct ConnectionView: View {
     let importProfile: () -> Void
     @State private var removing: VPNProfile?
     @State private var editingDirectSites = false
+    @AppStorage("directSites.enabled") private var directSitesEnabled = false
     @AppStorage("directSites.useRussianSites") private var useRussianSites = false
     @AppStorage("directSites.custom") private var customSites = ""
 
@@ -313,7 +314,7 @@ private struct ConnectionView: View {
         } else {
             do {
                 tunnel.perform("start", profile: try JSONEncoder().encode(profile),
-                               directSites: DirectSites(useRussianSites: useRussianSites, custom: customSites))
+                               directSites: DirectSites(enabled: directSitesEnabled, useRussianSites: useRussianSites, custom: customSites))
             } catch {
                 tunnel.actionError = "Не удалось прочитать профиль."
             }

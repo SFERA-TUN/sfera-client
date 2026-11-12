@@ -116,10 +116,16 @@ public final class MainActivity extends Activity {
     private void editDirectSites() {
         DirectSites saved = DirectSites.load(this);
         var fields = column(20);
+        var enabled = new CheckBox(this);
+        enabled.setText("Раздельное туннелирование");
+        enabled.setChecked(saved.enabled);
+        add(fields, enabled, 0);
+        add(fields, text("Настройки применятся при следующем подключении. Список сохранится при выключении.",
+            13, MUTED, false), 4);
         var preset = new CheckBox(this);
         preset.setText("Популярные сайты России");
         preset.setChecked(saved.useRussianSites);
-        add(fields, preset, 0);
+        add(fields, preset, 12);
         var input = new EditText(this);
         input.setHint("Домены или ссылки, по одному на строку");
         input.setContentDescription("Свои сайты без VPN");
@@ -140,7 +146,8 @@ public final class MainActivity extends Activity {
         dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE)
             .setOnClickListener(view -> {
                 try {
-                    new DirectSites(preset.isChecked(), input.getText().toString()).save(this);
+                    new DirectSites(enabled.isChecked(), preset.isChecked(), input.getText().toString())
+                        .save(this);
                     dialog.dismiss();
                 } catch (IllegalArgumentException error) {
                     input.setError(error.getLocalizedMessage());

@@ -3,6 +3,7 @@ import Foundation
 import os
 
 struct DirectSites: Sendable {
+    var enabled = false
     var useRussianSites = false
     var custom = ""
 
@@ -41,6 +42,7 @@ struct DirectSites: Sendable {
     }
 
     func resolve() throws -> [String] {
+        guard enabled else { return [] }
         let hosts = try hosts()
         guard !hosts.isEmpty else { return [] }
         let result = OSAllocatedUnfairLock(initialState: Set<String>())

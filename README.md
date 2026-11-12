@@ -19,7 +19,7 @@ For iOS, use Xcode with the iOS platform, XcodeGen 2.46.0 and Rust target `aarch
 
 ## Split tunneling
 
-Open **Сайты без VPN** while disconnected. Enable the Russian sites preset or paste a domain, a URL, or a list of either. The preset is based on [V2Fly category-ru](https://github.com/v2fly/domain-list-community/blob/master/data/category-ru) and [amnezia-tunneling-ru](https://github.com/lib4u/amnezia-tunneling-ru).
+Open **Сайты без VPN** while disconnected and turn **Раздельное туннелирование** on or off. The switch is off by default, and switching it off keeps your list for later. Enable the Russian sites preset or paste a domain, a URL, or a list of either. The preset is based on [V2Fly category-ru](https://github.com/v2fly/domain-list-community/blob/master/data/category-ru) and [amnezia-tunneling-ru](https://github.com/lib4u/amnezia-tunneling-ru).
 
 SFERA excludes the IPv4 addresses it resolves at connection time. Add specific subdomains separately and reconnect when addresses change. Sites that share an IP address also share its route. On macOS, reconnect after changing networks to restore the exclusions. The setting is available on macOS, iOS 17+, and Android 13+.
 

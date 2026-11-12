@@ -2,6 +2,7 @@ import SwiftUI
 
 struct DirectSitesEditor: View {
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("directSites.enabled") private var enabled = false
     @AppStorage("directSites.useRussianSites") private var useRussianSites = false
     @AppStorage("directSites.custom") private var custom = ""
     @State private var draft = DirectSites()
@@ -10,6 +11,10 @@ struct DirectSitesEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Сайты без VPN").font(.title2.bold())
+            Toggle("Раздельное туннелирование", isOn: $draft.enabled)
+            Text("Настройки применятся при следующем подключении. Список сохранится при выключении.")
+                .font(.footnote).foregroundStyle(.secondary)
+            Divider()
             Toggle("Популярные сайты России", isOn: $draft.useRussianSites)
             Text("Яндекс, VK, Госуслуги, банки и маркетплейсы.")
                 .font(.footnote).foregroundStyle(.secondary)
@@ -35,12 +40,13 @@ struct DirectSitesEditor: View {
         }
         .padding(24)
         .frame(idealWidth: 460)
-        .onAppear { draft = DirectSites(useRussianSites: useRussianSites, custom: custom) }
+        .onAppear { draft = DirectSites(enabled: enabled, useRussianSites: useRussianSites, custom: custom) }
     }
 
     private func save() {
         do {
             _ = try draft.hosts()
+            enabled = draft.enabled
             useRussianSites = draft.useRussianSites
             custom = draft.custom
             dismiss()

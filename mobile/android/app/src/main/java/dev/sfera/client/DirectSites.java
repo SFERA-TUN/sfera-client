@@ -25,27 +25,30 @@ final class DirectSites {
         "tbank.ru tinkoff.ru alfabank.ru vtb.ru ozon.ru ozonusercontent.com wildberries.ru " +
         "wbstatic.net avito.ru avito.st auto.ru 2gis.ru rutube.ru rbc.ru hh.ru";
 
+    final boolean enabled;
     final boolean useRussianSites;
     final String custom;
 
-    DirectSites(boolean useRussianSites, String custom) {
+    DirectSites(boolean enabled, boolean useRussianSites, String custom) {
+        this.enabled = enabled;
         this.useRussianSites = useRussianSites;
         this.custom = custom;
     }
 
     static DirectSites load(Context context) {
         var preferences = context.getSharedPreferences("directSites", Context.MODE_PRIVATE);
-        return new DirectSites(preferences.getBoolean("russian", false), preferences.getString("custom", ""));
+        return new DirectSites(preferences.getBoolean("enabled", false), preferences.getBoolean("russian", false),
+            preferences.getString("custom", ""));
     }
 
     void save(Context context) {
         hosts();
         context.getSharedPreferences("directSites", Context.MODE_PRIVATE).edit()
-            .putBoolean("russian", useRussianSites).putString("custom", custom).apply();
+            .putBoolean("enabled", enabled).putBoolean("russian", useRussianSites).putString("custom", custom).apply();
     }
 
     boolean configured() {
-        return useRussianSites || !custom.trim().isEmpty();
+        return enabled && (useRussianSites || !custom.trim().isEmpty());
     }
 
     private List<String> hosts() {
@@ -78,6 +81,7 @@ final class DirectSites {
     }
 
     List<String> resolve() throws Exception {
+        if (!configured()) return Collections.emptyList();
         var hosts = hosts();
         if (hosts.isEmpty()) return Collections.emptyList();
         var pool = Executors.newFixedThreadPool(Math.min(8, hosts.size()));

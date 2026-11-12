@@ -42,6 +42,14 @@ struct MacClientCheck {
         reopened.removeProfile(first.id)
         precondition(reopened.profile?.id == second.id && reopened.profiles.count == 1)
 
-        print("SSH endpoint, disconnect during reconnect, profile migration/import/selection/removal: OK")
+        var directSites = DirectSites(useRussianSites: true, custom: "https://Example.org/path")
+        let disabledRoutes = try directSites.resolve()
+        precondition(disabledRoutes.isEmpty, "Disabled split tunneling must leave all traffic in the VPN")
+        directSites.enabled = true
+        let hosts = try directSites.hosts()
+        precondition(hosts.contains("example.org") && hosts.contains("yandex.ru"),
+                     "Re-enabling split tunneling must preserve both site lists")
+
+        print("SSH endpoint, profile management, and split tunneling switch: OK")
     }
 }

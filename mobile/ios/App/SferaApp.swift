@@ -97,6 +97,7 @@ private struct ConnectionView: View {
     @State private var model = Connection()
     @State private var importing = false
     @State private var editingDirectSites = false
+    @AppStorage("directSites.enabled") private var directSitesEnabled = false
     @AppStorage("directSites.useRussianSites") private var useRussianSites = false
     @AppStorage("directSites.custom") private var customSites = ""
 
@@ -130,7 +131,7 @@ private struct ConnectionView: View {
                         .font(.callout.weight(.semibold))
                         .foregroundStyle(status.2)
                     Button {
-                        Task { await model.toggle(directSites: DirectSites(useRussianSites: useRussianSites, custom: customSites)) }
+                        Task { await model.toggle(directSites: DirectSites(enabled: directSitesEnabled, useRussianSites: useRussianSites, custom: customSites)) }
                     } label: {
                         Text(model.active ? "Отключить VPN" : "Подключить VPN")
                             .frame(maxWidth: .infinity)
